@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { authApi } from 'aws-blocks';
-  import { onAuthChange } from '@aws-blocks/blocks/ui';
-  import TodoList from '$lib/components/TodoList.svelte';
+  import { Authenticator, onAuthChange } from '@aws-blocks/blocks/ui';
+  import { mountNode } from '$lib/mountNode';
 
   type AuthUser = Parameters<Parameters<typeof onAuthChange>[1]>[0];
+
+  const appTitle = 'AI Webmap';
 
   let user = $state<AuthUser>(null);
 
@@ -13,22 +15,14 @@
 </script>
 
 <svelte:head>
-  <title>Blocks App</title>
+  <title>{appTitle}</title>
 </svelte:head>
 
-<h1 class="mb-1 text-3xl font-bold">Blocks App</h1>
-<p class="mb-6 text-sm leading-normal text-bb-muted">
-  This starter app demonstrates:
-  <strong class="text-bb-text">authentication</strong> with cross-tab coordination,
-  <strong class="text-bb-text">real-time sync</strong> across browser tabs,
-  and <strong class="text-bb-text">todos stored in a distributed table</strong> with per-user isolation.
-</p>
+<h1 class="mb-6 text-3xl font-bold">{appTitle}</h1>
 
 {#if user}
-  <!-- Keyed so a different user gets a fresh list and realtime subscription. -->
-  {#key user.username}
-    <TodoList />
-  {/key}
+  <p data-testid="signed-in-user">Signed in as <strong>{user.username}</strong>.</p>
 {:else}
-  <p>Sign in to get started.</p>
+  <!-- The server offers sign-in only; accounts are created by the operator. -->
+  <div {@attach mountNode(() => Authenticator(authApi))}></div>
 {/if}

@@ -1,74 +1,256 @@
-# AWS Blocks App
+# AI Webmap
 
-Real-time todo app with authentication, per-user data isolation, and live sync across tabs.
+チャットで指示した内容から主題図を作る、技術検証用のデモアプリです。バックエンドは AWS Blocks（`aws-blocks/`）、フロントエンドは SvelteKit（Svelte 5）の静的 SPA（`src/`）です。設計と調査の記録は `docs/` にあります。いまは土台の段階で、画面にはサインインと、サインイン後の仮の画面だけがあります。
 
-## Getting Started
+## セットアップ
+
+必要なもの: Node.js 22 以上（`package.json` の `engines`）。ただし、単体テストの DOM 環境（`jsdom` 31）は Node `^22.22.2 || ^24.15.0 || >=26.0.0` を要求するので、`npm run test:unit` を動かすにはこの範囲の Node を使ってください。
 
 ```bash
-npm run dev          # Start local dev server (mocks, no AWS needed)
-npm run test:e2e     # Run API tests
-npm run sandbox      # Deploy to AWS sandbox
-npm run sandbox:deploy # Deploy to AWS once and exit (no watch)
+npm install
+cp .env.example .env   # 3 組のユーザー名とパスワード（8 文字以上）を書く。.env は git に入らない
+npm run seed:users     # ローカルのユーザーと利用許可の一覧を作る（開発サーバーを止めた状態で）
+npm run dev            # http://localhost:3000 （フロントエンドは内部でポート 3100）
 ```
 
-Open http://localhost:3000 after `npm run dev`.
+## コマンド
 
-## Project Structure
+| コマンド | 内容 |
+|---------|------|
+| `npm run dev` | ローカル開発サーバー（Building Blocks のモックを使う。AWS は不要） |
+| `npm run dev:stop` | 開発サーバーを止める |
+| `npm run seed:users` | ローカルと E2E 用のユーザーを作り、利用許可の一覧に入れる（下記） |
+| `npm run admin:create-user` | デプロイ先のユーザーを、認証ブロックのテーブルへの直接の書き込みで作る（運用者用。下記「デプロイ先」。`--dry-run` は AWS に何も送らない） |
+| `npm run data:convert` | raw データ（N03、L01、S12、N02、P29）から `data/dist/` の 6 つの GeoParquet（`municipalities`、`prefectures`、`land_prices`、`stations`、`railways`、`schools`）を作り、最後にデータセットのカタログ `shared/catalog.json` も書く（先に `scripts/data/download.sh`。方法と結果は `docs/data-sources.md` の 5 と 6） |
+| `npm run data:catalog` | `data/dist/` の既存の 6 ファイルから `shared/catalog.json`（LLM のプロンプトに入るデータセットの説明）を作り直す。文章（`scripts/data/catalog.config.ts`）を直したときに使う（`docs/data-sources.md` の 7） |
+| `npm run data:upload` | `data/dist/` の 6 つの Parquet と DuckDB-WASM のバイナリを、ローカルのモック（既定）またはサンドボックスのバケットに入れ、入れたものをダウンロードし直して照合する。`--dry-run`、`--verify-only`、`--target <local\|sandbox>`（下記「データのバケット」。本番には使わない） |
+| `npm run test:unit` | 単体テスト（vitest。`src/**`、`shared/**`、`aws-blocks/**`、`scripts/**`） |
+| `npm run test:unit:coverage` | 同、カバレッジつき |
+| `npm run test:e2e` | E2E テスト（下記） |
+| `npm run typecheck` | `svelte-check` による型検査（フロントエンド、バックエンド、テスト） |
+| `npm run build` | 型検査のあと、フロントエンドを `build/` に出力 |
+| `npm run sandbox` / `sandbox:deploy` / `sandbox:preview` / `sandbox:destroy` / `deploy` | AWS へのデプロイ（AWS の認証情報が必要） |
 
-| Path | Purpose |
-|------|---------|
-| `aws-blocks/index.ts` | Backend: auth, data model, API, real-time channels |
-| `src/routes/` | Frontend pages (SvelteKit): `+layout.svelte` has the account menu, `+page.svelte` the home page |
-| `src/lib/components/TodoList.svelte` | Todo UI with live updates |
-| `src/app.css` | Tailwind CSS entry point and theme |
-| `src/app.html` | HTML shell |
-| `test/e2e.test.ts` | Tests: auth, CRUD, conflicts, real-time |
+## ユーザー
 
-## Frontend
+サインアップはできません。画面にサインアップの操作はありません。型付きクライアントから手作りのサインアップを呼ぶことはできますが、`authApi`（`aws-blocks/index.ts`）はサインインとサインアウトだけを受け付け、それ以外のアクションは何も作らず、セッションもそのままにして、エラー付きで現在の認証状態を返します。ユーザーは運用者だけが作ります。
 
-The frontend is [SvelteKit](https://svelte.dev/docs/kit) (Svelte 5) styled with [Tailwind CSS](https://tailwindcss.com) v4. It is built as a static single-page app: `@sveltejs/adapter-static` writes it to `build/`, and server-side rendering is off (`src/routes/+layout.ts`).
+### ローカルと E2E 用
 
-- Hosting serves `build/` from S3 and CloudFront. This depends on `framework: 'spa'` in `aws-blocks/index.cdk.ts`; without it, Hosting deploys SvelteKit as SSR on Lambda, which does not build with `adapter-static`.
-- Server-only SvelteKit files (`+page.server.ts`, `+server.ts`, `hooks.server.ts`) do not run in the deployed app. Put server logic in `aws-blocks/index.ts`.
-- Tailwind has no config file. `src/app.css` imports it, limits class scanning to `src/`, and maps the Blocks UI design tokens to theme colors such as `bg-bb-surface` and `text-bb-muted`.
+`npm run seed:users`（`scripts/seed/seed-users.ts`）が、ブロックの `auth.signUp` を直接呼んでユーザーを作り、あわせてローカルの利用許可の一覧に入れます。ユーザーは 3 人です。
 
-## What's Included
+| 役割 | 変数 | 一覧 | 用途 |
+|------|------|------|------|
+| 管理者 | `SEED_USERNAME` / `SEED_PASSWORD` | 利用許可と管理者の両方 | データのアップロード（`npm run data:upload`）と通常の確認 |
+| 許可 | `SEED_ALLOWED_USERNAME` / `SEED_ALLOWED_PASSWORD` | 利用許可だけ | 管理者ではない、通常の利用者 |
+| 不許可 | `SEED_DENIED_USERNAME` / `SEED_DENIED_PASSWORD` | どちらにもない | サインインはできるが、すべての API メソッドが拒否されること（E2E） |
 
-- **AuthBasic** — sign up / sign in / sign out with JWT sessions
-- **DistributedTable** — todos stored in DynamoDB with Zod schema validation
-- **Optimistic locking** — `version` field + `ifFieldEquals` prevents lost updates
-- **Realtime** — todo changes broadcast to all connected tabs via WebSocket
+- 資格情報は環境変数で渡します。コマンドラインには渡しません。未設定なら、リポジトリ直下の `.env`（git 管理外。雛形は `.env.example`）から読みます。3 組のどれかが欠けていると、足りない変数名を表示して、何も作らずに終わります。3 つのユーザー名は互いに違うものにしてください。値に `#` や空白を含めるときは引用符で囲んでください（引用符なしの `#` 以降はコメントとして捨てられます）。変数名の定義は `scripts/seed/seed-env.ts` の 1 か所です。
+- 冪等です。同じユーザー名がすでにあれば、上書きせずに「作成済み」と表示します。パスワードが違っても、既存のユーザーは変更されません。一覧には、足りない名前だけを足します（**マージ**）。すでにある名前は残し、削除はしません。不許可のユーザーは入れません。2 回目は何も変えません。
+- 開発サーバーが動いていると、何もせずにエラーで終わります（ローカルのユーザーの保存先は起動時に一度だけ読まれ、あとで上書きされるため）。先に `npm run dev:stop` で止めてください。
+- リポジトリ直下で実行します（保存先が実行時のカレントディレクトリの `.bb-data/` になるため）。`npm run` 経由なら満たされます。
 
-## Commands
+#### 利用許可の一覧（ローカル）
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Local dev with mock storage |
-| `npm run test:e2e` | Test API via direct imports |
-| `npm run typecheck` | Type-check Svelte and TypeScript (frontend, backend and tests) with `svelte-check` |
-| `npm run build` | Type-check, then build the frontend to `build/` |
-| `npm run sandbox` | Deploy backend to AWS, serve frontend locally |
-| `npm run sandbox:deploy` | Deploy the backend to AWS once and exit (no watch, no dev server); for scripts and CI |
-| `npm run sandbox:preview` | Deploy a hosted preview: the sandbox backend plus the app in preview shape (API Gateway, no CloudFront); prints the URL. Same stack as `sandbox`: a plain sandbox deploy removes the preview, and re-adding it gives a new URL. Tear down with `npm run sandbox:destroy` |
-| `npm run deploy` | Full production deploy |
-| `npm run sandbox:destroy` | Tear down sandbox resources |
+一覧は 2 つで、どちらも `AppSetting`（`aws-blocks/access.ts`）に持つ、ユーザー名の JSON 配列です。既定は `[]` で、未設定、空、JSON でない、文字列の配列でない場合は、一覧が空として扱われ、全員が拒否されます（拒否は 403、`shared/access.ts` の `NotAllowedException`。管理者の一覧に入っていても、利用許可の一覧になければ許可されません）。名前は大文字小文字と空白を含め、ユーザーを作ったときの文字列と完全に一致させます。
 
-## Building on this template
+- ローカルでは、一覧は `npm run seed:users` だけが書きます。投入するユーザー（管理者と許可のユーザー）が入ります。ほかの名前をローカルの一覧に足す、サポートされた方法は、いまはありません（ローカルのユーザーも、投入スクリプトだけが作ります）。ローカルの保存先は `.bb-data/settings.json` ですが、`.bb-data/` の下のファイルは手で編集しないでください。
+- 一覧が壊れている（文字列の配列でない）とき、アプリは空として扱い、`seed:users` は警告（一覧の名前だけ。内容は出さない）を表示して、投入する名前で置き換えます。（マージの判断は単体テスト済み。スクリプトのこの分岐は、ソースを読んだ範囲で、実行はしていない）不許可のユーザーの名前（`SEED_DENIED_USERNAME`）がすでにどちらかの一覧にあると、`seed:users` は何も作らず、何も書かずに、その一覧と変数名を表示して失敗します。別の名前を選んでください（スクリプトは名前を削除しません）。
+- ブロックのソースでは、値は呼び出しのたびに保存先から読まれ、キャッシュはありません（ソースを読んだ範囲。実行はしていない）。
 
-The test file (`test/e2e.test.ts`) is structured in sections — Auth, CRUD, Conflicts, Realtime. Add your own tests by copying a `test(...)` block and changing the assertion. The API methods in `aws-blocks/index.ts` follow a consistent pattern: authenticate → do work → broadcast.
+#### 開発サーバーのモデル種別
 
-To replace the todo domain with your own: update the Zod schema, rename the API methods, and adjust the tests. The auth and real-time wiring stays the same.
+`AGENT_LOCAL_MODEL`（`bedrock` または `canned`。未設定は `bedrock`）で、ローカルのエージェントのモデル種別を切り替えます。それ以外の値だと、開発サーバーはポートを開かず、`AGENT_LOCAL_MODEL must be one of bedrock, canned (got "..."); unset it for bedrock.` というエラーで読み込みに失敗します（実行して確認済み）。`getAppInfo` がこの値を返します。デプロイ先では設定しません。E2E は、自分で開発サーバーを起動するとき `canned` を設定します。
 
-## Stack naming
+### 管理者の一覧
 
-Your CloudFormation stack names are derived from the `stackId` in `.blocks/config.json` — generated at scaffold time from your project name plus a random suffix (e.g., `my-app-a3x9kf`). Production deploys as `<stackId>-prod` and sandbox as `<stackId>-<username>-<random>`, where the sandbox identifier is per-machine and stored in `.blocks-sandbox/sandbox-id.txt` (gitignored). This lets multiple developers share a testing account without colliding.
+管理者の一覧は、データファイルのアップロード用の署名付き URL を発行する `api.createDatasetUpload` だけを制御します。呼べるのは、利用許可の一覧にも入っている管理者だけです（利用許可がなければ `NotAllowedException`、許可されていても管理者でなければ 403 の `AdminRequiredException`）。管理者の一覧も、未設定や壊れた値は空として扱われます。
 
-To change the stack name, edit `stackId` in `.blocks/config.json`. For dynamic naming logic, modify `aws-blocks/index.cdk.ts` directly.
+### デプロイ先
 
-## For Agents
+**この節の手順は、ブロックのソースを読んで書いたもので、デプロイしたアプリではまだ一度も実行していません。最初のデプロイで確認します（ユーザー作成の経路が動かなければ、認証ブロックを、サインアップを無効にしたマネージドなユーザープールに切り替える案があります）。** 以降のコマンドはすべて雛形です。`<…>` は運用者が自分の値に置き換えます。AWS の認証情報とリージョンは、標準の環境変数（`AWS_PROFILE`、`AWS_REGION`）で渡します。
 
-Full Building Block documentation: `node_modules/@aws-blocks/blocks/README.md`
+アプリにはサインアップがなく、ユーザーを作る API もありません。デプロイ先のユーザーは、運用者が自分の AWS の資格情報で、認証ブロックのテーブルに直接書き込んで作ります。
 
-**Do not use local files or in-memory storage** — use Building Blocks for all data persistence and cloud abstractions (they mock locally and deploy to AWS automatically).
+#### 1. ユーザーを作る
 
-Start in `aws-blocks/index.ts` (backend) and `src/routes/+page.svelte` (frontend). Test via `npm run test:e2e`. The API transport (JSON-RPC) is auto-generated and intentionally invisible — do not curl endpoints directly. Testing is best done through the e2e tests which use the same typed client as the frontend. If you do need to call the API directly (e.g. troubleshooting a deployed app), every namespace shares one endpoint — `POST /aws-blocks/api` with the export name and method in the JSON-RPC `method` field (`"api.listTodos"`, `"authApi.getAuthState"`); there are no per-namespace paths like `/aws-blocks/authApi`. See `TROUBLESHOOTING.md` in `node_modules/@aws-blocks/blocks/docs` for curl examples.
+1. テーブル名を調べます。認証ブロックのユーザーのテーブルの名前は、`<スタック名>-<スコープ名>-auth-users` です（`@aws-blocks/bb-kv-store` の `src/index.cdk.ts` が、ブロックの `fullId` をテーブル名にします。`fullId` は、スタック名、`aws-blocks/scope.ts` の `new Scope('…')` の引数、ブロックの id を `-` でつないだものです。スタック名は本番では `<stackId>-prod`、下の「スタック名」を参照）。候補は、読み取りだけのコマンドで一覧できます。
+
+   ```sh
+   aws dynamodb list-tables --profile <プロファイル> --region <リージョン> \
+     --query "TableNames[?contains(@, '<スコープ名>-auth-users')]"
+   ```
+
+2. まず `--dry-run` で確かめます。入力とパスワードの規則を確かめ、書き込む項目を組み立てて表示するだけで、AWS には何も送らず、AWS のクライアントも作りません（パスワードのハッシュは表示しません）。パスワードは、ターミナルでは入力が表示されない対話の入力で 2 回聞かれます。コマンドラインには渡せません（`--dry-run` 以外の引数は、引数を繰り返さずに拒否されます）。パスワードをコマンドの後ろに書かないでください。npm は与えられた引数を端末に表示し、引数はシェルの履歴にも残りえます（履歴は一般的な話で、このコマンド固有の確認ではありません）。
+
+   ```sh
+   ADMIN_USERS_TABLE='<テーブル名>' ADMIN_NEW_USERNAME='<ユーザー名>' \
+     npm run admin:create-user -- --dry-run
+   ```
+
+3. 同じコマンドから `--dry-run` を外すと、ユーザーを作ります。
+
+   ```sh
+   AWS_PROFILE=<プロファイル> AWS_REGION=<リージョン> \
+   ADMIN_USERS_TABLE='<テーブル名>' ADMIN_NEW_USERNAME='<ユーザー名>' \
+     npm run admin:create-user
+   ```
+
+- 変数名の定義は `scripts/admin/admin-env.ts` の 1 か所です。これらの変数は、その 1 回のコマンドのシェルにだけ置きます。このコマンドは `.env` を読みません。変数は `.env.example` にも入れません。デプロイ先のパスワードがプロジェクトのファイルに残らないようにするためです。
+- ユーザー名は、与えたとおりに（前後の空白も大文字小文字もそのまま）保存されます。空の名前は拒否されます。
+- 標準入力がターミナルでないとき（スクリプトからの実行）だけ、パスワードを環境変数 `ADMIN_NEW_PASSWORD` から読みます。シェルの履歴に残る書き方（コマンドラインへの直接の `ADMIN_NEW_PASSWORD=…`）は避けてください。
+- すでにあるユーザーは上書きしません。「すでにある」と表示して、何も変えずに終わります（書き込みは「キーがなければ」の条件つき）。
+- このコマンドは、`@aws-blocks/bb-auth-basic` の `signUp` が保存するレコードの形式（フィールド、符号化、bcrypt のコスト 12）とパスワードの規則を、`scripts/admin/user-record.ts` に写しています（パスワードの規則の値は、アプリの `auth.ts` と共有する `aws-blocks/password-policy.ts` の 1 か所、ブロックの検査を写した関数は `user-record.ts` の `passwordViolations` です）。ブロックのパッケージを上げたときは、この写しを確かめ直してください。
+- 確認の範囲: レコードの形式は、ブロックのローカルのモックに対して、ブロック自身の `signUp` と `signIn` で単体テストしています。DynamoDB の項目そのもの（属性 `pk` と、値を 2 重に JSON 符号化した文字列の `value`）は、ブロックの AWS 用のソースを読んだだけで、実行していません。
+
+#### 2. 利用許可の一覧にユーザー名を入れる
+
+ユーザーを作っただけでは、アプリは使えません。ユーザー名を利用許可の一覧に入れます。データをアップロードする人だけは、管理者の一覧にも入れます。名前は、作ったユーザーの名前と、大文字小文字も空白も完全に一致させます。
+
+一覧は SSM パラメーターで、名前は `/<スタック名>-<スコープ名>-allowedUsers`（利用許可）と `/<スタック名>-<スコープ名>-adminUsers`（管理者）です（`@aws-blocks/bb-app-setting` の `src/index.cdk.ts` が `/${fullId}` を名前にします）。候補は読み取りだけのコマンドで一覧できます。
+
+```sh
+# 利用許可の一覧
+aws ssm describe-parameters --profile <プロファイル> --region <リージョン> \
+  --parameter-filters "Key=Name,Option=Contains,Values=allowedUsers" \
+  --query "Parameters[].Name"
+
+# 管理者の一覧
+aws ssm describe-parameters --profile <プロファイル> --region <リージョン> \
+  --parameter-filters "Key=Name,Option=Contains,Values=adminUsers" \
+  --query "Parameters[].Name"
+```
+
+現在の値を読みます（読み取りだけ）。
+
+```sh
+aws ssm get-parameter --profile <プロファイル> --region <リージョン> \
+  --name '<パラメーター名>' --query Parameter.Value --output text
+```
+
+新しい値を書きます。値は、ユーザー名の文字列の JSON 配列の全体です。上書きなので、残す名前も全部含めてください。
+
+```sh
+aws ssm put-parameter --profile <プロファイル> --region <リージョン> \
+  --name '<パラメーター名>' --type String --overwrite \
+  --value '["<ユーザー名>"]'
+```
+
+- デプロイのあとは、毎回、2 つのパラメーターをもう一度読み、初期値の `[]` に戻っていたら書き直してください。設定ブロックの CDK は、一覧のパラメーターを初期値 `[]` で作ります（`@aws-blocks/bb-app-setting` の `src/index.cdk.ts`）。CloudFormation の外で書いた値は、そのリソースに更新が入るデプロイで上書きされうる、とソースから推定しています（実行して確かめていません）。戻っている間は、アプリは全員を拒否します（開放はしません）。
+- 変更は次の呼び出しから効きます。再デプロイは要りません（アプリは呼び出しのたびにパラメーターを読みます）。
+- **パラメーターは削除しないでください。** 削除すると、すべての呼び出しが、きれいな拒否ではなくサーバーエラーで失敗します。全員の利用を止めたいときは、`[]` を書きます。
+
+#### 3. 取り消す
+
+- 利用を止めるには、その名前を一覧から外します（上と同じ書き込み。残す名前だけの配列を書く）。
+- ユーザーのレコードをテーブルから消す操作でも、次のリクエストから拒否されます（認証ブロックは、リクエストのたびにユーザーのレコードを引くため）。ここにはコマンドを載せません。この操作は実行していません。
+
+## データのバケット
+
+データファイル（Parquet 6 つ）と DuckDB-WASM のバイナリは、非公開の `FileBucket`（`aws-blocks/datasets.ts`）に置きます。バケットには、署名付き URL でしか届きません（ブロックのソースを読んだ範囲。デプロイしたバケットでは確認していない）。`api.getDatasetSources` が、利用許可のユーザーにだけ、ダウンロード用の署名付き URL（有効期間は `shared/config.ts` の `urlConfig.signedUrlTtlSeconds`）を返します。ファイル名は `shared/datasets.ts` の 1 か所で定義します（Parquet は `datasetFileNames`、wasm は `duckdbWasmFileName`。一覧は `uploadableFiles`）。入れる側の `api.createDatasetUpload` は管理者だけが呼べ、この 7 つの名前以外は拒否します。
+
+`npm run data:upload`（`scripts/data/upload.ts`）が、この 7 つを入れて、照合します。リポジトリ直下で実行します。
+
+- 入れるファイルの元: Parquet は `data/dist/<名前>`（先に `npm run data:convert`）、wasm はインストール済みの `@duckdb/duckdb-wasm` の `dist/duckdb-eh.wasm`（`npm install`）です。7 つがそろっていないと、足りないファイルとそれを作るコマンドを表示して、何も入れずに終わります。
+- wasm の版: オブジェクト名の版は `shared/config.ts` の `dataConfig.duckdbWasmVersion` の手書きの値です（ブラウザとバックエンドのコードは `node_modules` を読めないため）。コマンドは、インストール済みの版から作った名前がこれと違うと、両方の版を表示して入れません。`package.json` の依存（バージョンの範囲を使わない固定）、インストール済みの版、`shared/config.ts` の 3 つが同じであることは、単体テストも確かめます。
+- 資格情報: 管理者の `SEED_USERNAME` / `SEED_PASSWORD` だけです（環境変数、なければ `.env`。「ユーザー」の節と同じ読み込み処理）。コマンドラインには渡しません。ユーザー名、パスワード、Cookie、署名付き URL は、エラーを含めてどこにも表示しません。
+- 入れ方: 名前ごとに 1 つずつ、`api.createDatasetUpload` で URL を得て、`Content-Type`（`shared/datasets.ts` の `uploadContentType`）をつけて `PUT` します。失敗したら、そこで止まり、オブジェクト名、HTTP ステータス、短い理由（レスポンスのエラーコードかメッセージだけ）、すでに入れたものを表示して、終了コード 1 で終わります。
+- 照合: 入れたあと（`--verify-only` ではこれだけ）、`api.getDatasetSources` の URL で 7 つをダウンロードし、バイト数、sha256、レスポンスの `Content-Type` を元のファイルと比べて、1 行ずつ `ok` か違いを表示します。1 つが違っても 7 つすべてを調べ、終了コードは 7 つとも一致したときだけ 0 です。
+- `--dry-run`: 計画（オブジェクト名、元のパス、content type、バイト数、sha256）を表示するだけです。ネットワーク、設定ファイル、資格情報、クライアントのどれも使いません。`--dry-run` と `--verify-only` は同時に指定できません。
+
+### ローカル
+
+1. `npm run seed:users`（開発サーバーを止めた状態で）
+2. `npm run dev` を別のターミナルで起動する
+3. `npm run data:upload`（7 つを入れて、7 つが一致するまで確かめる）
+
+`.bb-data/` を消したときは、wasm も消えるので、同じ手順をやり直します。ローカルで実行して確かめました（7 つを入れて 7 つ一致。E2E テストのあとの `--verify-only` でも 7 つ一致）。
+
+### 対象の確認（ガード）
+
+生成されたクライアントは、API の宛先を環境変数 `BLOCKS_API_URL` / `BLOCKS_CONFIG`、なければ `.blocks-sandbox/config.json` から決めます。このファイルは、開発サーバーの起動とデプロイのたびに上書きされるので、そのまま従うと、最後に起動またはデプロイしたものに入れてしまいます。そのため、コマンドはクライアントを読み込む前に、2 つの環境変数が設定されていれば拒否し、ファイルの `environment` が `--target` と同じであること（`local` ではさらに、宛先がこのマシンの開発サーバーのポートであること）を確かめます。確かめた宛先は、そのままクライアントに渡します（クライアントがファイルをもう一度読むことはありません）。表示するのは対象の環境とホストだけです。ファイルがない、または未完成のときは、何を起動するかを表示して終わります。`--target production` は拒否します。
+
+### サンドボックス
+
+**この手順は書いただけで、実行していません**（AWS には一度も接続していません）。
+
+1. サンドボックスをデプロイする（`npm run sandbox:deploy`。AWS の認証情報が必要）。
+2. 管理者のユーザーを運用者用コマンドで作り、利用許可と管理者の両方の一覧に名前を入れる（上の「デプロイ先」）。
+3. 資格情報を `.env` または環境変数の `SEED_USERNAME` / `SEED_PASSWORD` に置く。
+4. `npm run data:upload -- --target sandbox`
+
+デプロイ先のアップロード用 URL は、実際のアップロードで試していません。SDK の既定のチェックサム計算が、空の本体のチェックサムを URL のクエリに入れ、S3 が `PUT` を拒否する可能性があります（ソースを読んだ範囲で、実行はしていない。`aws-blocks/datasets.ts` の注記）。拒否されたら、コマンドは HTTP ステータスと S3 のエラーコードを表示して止まるので、下の AWS CLI の手順に切り替えます。
+
+### 本番
+
+本番はこのコマンドの対象ではありません。`npm run data:upload -- --dry-run` が表示する 7 行（オブジェクト名と元のパス）それぞれについて、AWS CLI で入れます（**実行していません**）。
+
+```sh
+aws s3 cp <元のパス> s3://<バケット名>/<オブジェクト名> --content-type <content type> \
+  --profile <プロファイル> --region <リージョン>
+```
+
+`<content type>` は、`--dry-run` の行にある値です（Parquet は `application/vnd.apache.parquet`、wasm は `application/wasm`）。バケット名は、ブロックのソースでは、バケットの `fullId`（スタック名、`aws-blocks/scope.ts` の `Scope` の名前、`datasets` を `-` でつないだもの）が 63 文字以内ならそのまま名前になります。デプロイしたバケットでは確認していないので、実際の名前は、デプロイしたスタックの出力か、S3 の一覧（読み取りだけの操作）で確かめてください。入れたあとの照合は、利用許可のユーザーでアプリを開いて確かめます（`--verify-only` は本番を対象にできません）。
+
+### データの利用範囲
+
+N03（行政区域）から作った `municipalities.parquet` と `prefectures.parquet` は、ローカルのモックと、このアプリ専用の非公開のバケットにだけ置きます。ほかのバケット、公開の場所、ほかのサービスには置かないでください（N03 の利用条件の記載が食い違うため。経緯は `docs/data-sources.md` の 1、2.3）。
+
+### E2E テストが書き換えるオブジェクト
+
+E2E テストは、アップロードの往復を確かめるために、先頭のデータセットのファイル（`datasetFileNames` の先頭）を、ランダムなバイト列で一度置き換えます。置き換える前の内容を読んでおき、テストの最後に同じバイト列で入れ直して、ダウンロードして一致を確かめます。そのオブジェクトがもともとなかったとき（`.bb-data/` を消した直後など）は、API に削除がないので、ランダムなバイト列が残ります。テストはそのことを 1 行表示します（この「もともとなかった」場合の分岐は、実行していません。ブロックのファイルサーバーのソースを読んで、存在しないオブジェクトの答えが 404 と `NoSuchKey` であることを確かめただけです）。直すには `npm run data:upload` を実行します。E2E テストを途中で止めたときも、オブジェクトにランダムなバイト列が残りえます。`npm run data:upload -- --verify-only` で確かめ、違いが表示されたら `npm run data:upload` をやり直してください。もう 1 つのテストは、`Content-Type` が違う、またはない `PUT` が拒否される（ローカルのモックでは 403）ことと、そのあとのオブジェクトが変わっていないことを確かめます。署名付き URL はテストのメッセージにも出ません。
+
+## E2E テスト
+
+`npm run test:e2e` は、次の順で動きます。
+
+1. 開発サーバーが動いていなければ、`npm run seed:users` でユーザーと一覧を投入する（冪等）。
+2. 開発サーバーを `AGENT_LOCAL_MODEL=canned` で起動する。
+3. 型付きクライアントで、サインアップなどの手作りの呼び出しが拒否されること（アカウントが作られず、セッションも変わらないこと）と、公開される名前空間が `api` と `authApi` だけであること、投入済みのユーザーのサインイン、サインアウトを確かめる。未サインインの呼び出しと、不許可のユーザーの呼び出しが、`api` のすべてのメソッドで拒否されること、許可のユーザーと管理者が `getAppInfo` の答えを得ることも確かめる。データセットでは、署名付きのダウンロード URL と、アップロード URL が管理者だけに出ることに加えて、アップロードの往復と `Content-Type` の拒否も確かめる。この 2 つは、ローカルのバケットの 1 つのオブジェクトを一度置き換えて元に戻す（上の「E2E テストが書き換えるオブジェクト」）。`data/dist/` は要らない。終わると、起動した開発サーバーを止める。
+
+型付きクライアントはメソッドを列挙できないので、テスト内の `apiArguments` に `api` のメソッドごとの引数を書きます。メソッドを足して `apiArguments` に足さないと、`npm run typecheck` が失敗します。
+
+資格情報は、上の `.env`（または環境変数）から、テストとスクリプトが同じ読み込み処理で得ます。
+
+| 状況 | 動作 |
+|------|------|
+| `.env` がない初回 | 投入が「資格情報が未設定」のメッセージで失敗し、サーバーは起動しない。`.env` を作って再実行する |
+| 2 回目（ユーザーがいる） | 投入は「作成済み」と表示して成功し、テストが通る |
+| 開発サーバーが動いていて、ユーザーがいる | 投入せずにそのまま実行し、通る |
+| 開発サーバーが動いていて、ユーザーまたは一覧がない | サインインや `getAppInfo` のテストが、「`npm run dev:stop`、`npm run seed:users` の順に実行する」というメッセージで失敗する（コードを読んだ範囲。実行はしていない） |
+| 開発サーバーが動いている | モデル種別は `bedrock` と `canned` のどちらでも通る（自分で起動したときだけ `canned` を期待する） |
+| ユーザーはいるが、資格情報（`.env`）がない | 投入が未設定のメッセージで失敗する。何も消さない。サーバーが動いている場合は、サインインのテストが未設定のメッセージで失敗する |
+
+## 構成
+
+| パス | 内容 |
+|------|------|
+| `aws-blocks/index.ts` | バックエンド: `authApi`（サインインとサインアウトだけ）と `api`（アプリの API。各メソッドの先頭で `requireAllowedUser`） |
+| `aws-blocks/access.ts` | 利用許可と管理者の一覧（`AppSetting`）と `requireAllowedUser`、`requireAdmin` |
+| `aws-blocks/datasets.ts` | データのバケット（`FileBucket`）と署名付き URL の発行 |
+| `aws-blocks/user-list.ts`、`llm-mode.ts` | 一覧の解析と `AGENT_LOCAL_MODEL` の解析（Building Block を作らない関数。単体テストあり） |
+| `aws-blocks/auth.ts` | `AuthBasic` のインスタンス。`signUp` を公開する `auth.createApi()` / `auth.buildApi()` の戻り値はどこからも export しない |
+| `aws-blocks/scope.ts` | `Scope`（`ai-webmap`）。ローカルの保存先 `.bb-data/` のディレクトリ名の元 |
+| `shared/` | フロントエンドとバックエンドが共有する設定（`config.ts`）、エラー名（`access.ts`）、データのファイル名（`datasets.ts`） |
+| `aws-blocks/password-policy.ts` | パスワードの規則（`auth.ts` と、`scripts/admin/` が共有する 1 か所） |
+| `scripts/seed/` | ユーザー作成スクリプトと、資格情報の読み込み |
+| `scripts/admin/` | デプロイ先のユーザーを作る運用者用コマンド（`create-user.ts`）。レコードの組み立て（`user-record.ts`）、変数名（`admin-env.ts`）、単体テストあり |
+| `scripts/data/` | データの取得（`download.sh`）と変換（`convert.ts`）。設定は `datasets.config.ts`、純粋関数は `convert-plan.ts`、単体テストあり。バケットへの投入は `upload.ts`（引数 `upload-args.ts`、計画 `upload-plan.ts`、対象の確認 `upload-target.ts`、入れ方と照合 `upload-flow.ts`、エラーの理由 `upload-reason.ts`） |
+| `src/routes/` | フロントエンド: `+layout.svelte` にアカウントメニュー、`+page.svelte` にトップ画面 |
+| `test/e2e.test.ts` | E2E テスト |
+
+## フロントエンド
+
+[SvelteKit](https://svelte.dev/docs/kit)（Svelte 5）と [Tailwind CSS](https://tailwindcss.com) v4 による静的 SPA です。`@sveltejs/adapter-static` が `build/` に出力し、サーバーサイドレンダリングは無効です（`src/routes/+layout.ts`）。
+
+- `aws-blocks/index.cdk.ts` の `framework: 'spa'` が必要です。外すと、Hosting が SvelteKit を SSR として Lambda にデプロイしようとして、`adapter-static` ではビルドできません。
+- `+page.server.ts`、`+server.ts`、`hooks.server.ts` はデプロイ後に動きません。サーバー側の処理は `aws-blocks/index.ts` に書きます。
+- Blocks の UI 部品は DOM 要素です。`src/lib/mountNode.ts` の `mountNode` で取り付けます。
+
+## スタック名
+
+CloudFormation のスタック名は `.blocks/config.json` の `stackId` から決まります（本番は `<stackId>-prod`）。変えると別のスタックになるので、変えないでください。
+
+## エージェント向け
+
+Building Blocks の文書は `node_modules/@aws-blocks/blocks/README.md` にあります。永続化にはローカルのファイルやメモリを使わず、Building Blocks を使ってください。API の呼び出しには、`import { api, authApi } from 'aws-blocks'` の型付きクライアントを使い、JSON-RPC を手で組み立てません。詳細は `AGENTS.md` を参照してください。
