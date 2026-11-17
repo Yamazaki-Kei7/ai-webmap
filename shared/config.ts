@@ -45,7 +45,11 @@ export const toolConfig = {
   /** Most columns a `runQuery` result lists (the others are left out of the columns and the rows). */
   maxQueryColumns: 30,
   /** Most layer ids `removeLayer` lists as remaining. */
-  maxResultLayers: 100
+  maxResultLayers: 100,
+  /** Most field paths a rejected request names in its `INVALID_INPUT` message. */
+  maxIssuePaths: 5,
+  /** Decimals of the centre and the zoom `setView` reports (about 10 m of longitude). */
+  viewDecimals: 4
 } as const;
 
 /** The system prompt (`shared/prompt.ts`). */
@@ -213,6 +217,8 @@ export const mapConfig = {
   /** Padding (pixels) around a layer's bounding box when the map is fitted to it. */
   fitPaddingPx: 48,
   fitDurationMs: 600,
+  /** A move the tools wait for (`moveend`) is not waited for longer than this: a map that never reports the end must not hold a tool call. Well above `fitDurationMs`. */
+  moveWaitMs: 2_000,
   /** A layer of one point (or a tiny extent) is not zoomed in beyond this. */
   fitMaxZoom: 14,
   label: {

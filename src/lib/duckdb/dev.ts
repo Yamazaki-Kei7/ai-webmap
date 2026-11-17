@@ -1,4 +1,6 @@
 import type { Map as MaplibreMap } from 'maplibre-gl';
+import { createClientToolExecutor } from '../chat/clientTools';
+import type { ToolExecutor } from '../chat/toolExecutor';
 import { addLayer } from '../map/mapState.svelte';
 import type { ClientToolResult } from '../../../shared/toolProtocol';
 import { ensureViews, queryLayer, queryScalar, queryTable, type LayerQueryResult, type TableQueryResult } from './engine';
@@ -23,11 +25,14 @@ declare global {
     __aiWebmapMap?: MaplibreMap;
     /** Adds layers without the dev SQL box (the browser check of layers added in one tick). */
     __aiWebmapAddLayer?: typeof addLayer;
+    /** The tool executor of the chat (the six tools) on the real engine and map, for browser checks without the dev tool box. */
+    __aiWebmapTool?: ToolExecutor;
   }
 }
 
 export function installDevHandle(): void {
   window.__aiWebmapAddLayer = addLayer;
+  window.__aiWebmapTool = createClientToolExecutor(() => window.__aiWebmapMap);
   window.__aiWebmapEngine = {
     ensureViews,
     count: async (id) => {

@@ -43,6 +43,8 @@ describe('config invariants', () => {
       toolConfig.maxLayerNameChars,
       toolConfig.maxQueryColumns,
       toolConfig.maxResultLayers,
+      toolConfig.maxIssuePaths,
+      mapConfig.moveWaitMs,
       promptConfig.maxChars,
       promptConfig.maxRepeatedFailures,
       promptConfig.coarseMetresPerDegree,
@@ -53,6 +55,10 @@ describe('config invariants', () => {
 
   it('gives a data fetch longer than one query, so a slow file is not aborted on every try', () => {
     expect(engineConfig.dataFetchTimeoutMs).toBeGreaterThan(queryConfig.timeoutMs);
+  });
+
+  it('waits for a map move longer than the move itself takes', () => {
+    expect(mapConfig.moveWaitMs).toBeGreaterThan(mapConfig.fitDurationMs);
   });
 
   it('refreshes the signed URLs before they expire', () => {

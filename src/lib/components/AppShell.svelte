@@ -10,6 +10,7 @@
   import DataAttribution from './DataAttribution.svelte';
   import DevSqlBox from './DevSqlBox.svelte';
   import DevStyleBox from './DevStyleBox.svelte';
+  import DevToolBox from './DevToolBox.svelte';
   import LayerPanel from './LayerPanel.svelte';
   import MapView from './MapView.svelte';
   import { narrowViewport } from './narrowViewport';
@@ -89,6 +90,7 @@
           {#if import.meta.env.DEV}
             <DevSqlBox ready={engineStatus.state === 'ready'} />
             <DevStyleBox />
+            <DevToolBox ready={engineStatus.state === 'ready'} {map} />
           {/if}
         </LayerPanel>
         <DataAttribution />

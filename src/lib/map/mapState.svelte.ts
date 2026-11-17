@@ -1,12 +1,12 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { mapConfig } from '../../../shared/config';
-import type { GeometryFamily, LabelSpec, MapContext, StyleSpec } from '../../../shared/mapSpec';
+import type { AppliedStyle, GeometryFamily, LabelSpec, MapContext, StyleSpec } from '../../../shared/mapSpec';
 import { datasetIds } from '../../../shared/datasets';
 import { validateSql } from '../../../shared/sqlGuard';
 import { toolError, type ClientToolResult } from '../../../shared/toolProtocol';
 import type { Bbox, ColumnInfo, GeoJsonFeatureCollection, LayerQueryResult } from '../duckdb/queryTypes';
 import { checkLabel, resolveStyle, type ResolvedStyle } from './styleCompiler';
-import { buildMapContext } from './summary';
+import { buildMapContext, summarizeLayerApplied } from './summary';
 
 /** What a layer is made of: the name and the query, and optionally how to draw it (else a single colour, no label). */
 export type NewLayer = { name: string; sql: string; style?: StyleSpec; label?: LabelSpec | null };
@@ -186,6 +186,23 @@ export function setVisible(layerId: string, visible: boolean): void {
 /** What the model is told about the map (see `summary.ts`): never the features, and within `mapConfig.summaryMaxBytes`. */
 export function summarizeForLlm(): MapContext {
   return buildMapContext(mapState.view, $state.snapshot(mapState.layers));
+}
+
+/** A copy of a layer's state (plain data, no proxy), or undefined for an id that is not on the map. */
+export function getLayer(layerId: string): LayerState | undefined {
+  const layer = mapState.layers.find((l) => l.id === layerId);
+  return layer && $state.snapshot(layer);
+}
+
+/** The ids of the layers, in the order of the layer list. */
+export function layerIds(): string[] {
+  return mapState.layers.map((layer) => layer.id);
+}
+
+/** What `<map_state>` says the layer's style came out as (`applied`); the tool answers use it, so the model reads one numbering in both. */
+export function appliedOf(layerId: string): AppliedStyle | undefined {
+  const layer = getLayer(layerId);
+  return layer && summarizeLayerApplied(layer);
 }
 
 /** The view the map has moved to; the caller passes the centre wrapped into -180..180 (a map panned across the date line reports more). */

@@ -6,7 +6,7 @@
   import { GeoJSONSource, MapLibre as MapLibreMap, RawLayer } from 'svelte-maplibre-gl';
   import { mapConfig } from '../../../shared/config';
   import { beforeLabelLayerId, beforeMapLayerId, inDrawOrder, labelMapLayerIds } from '$lib/map/drawOrder';
-  import { pickFitBounds } from '$lib/map/fit';
+  import { fittedLayerIds, pickFitBounds } from '$lib/map/fit';
   import { getFeatures, mapState, setView } from '$lib/map/mapState.svelte';
   import { toMapLibreLayers } from '$lib/map/styleCompiler';
 
@@ -47,11 +47,11 @@
     queueMicrotask(() => (current.isStyleLoaded() ? raise() : current.once('idle', raise)));
   });
 
-  // Fit the map to a layer when it appears (not when the others change, and not for a layer with no feature).
-  const fitted = new Set<string>();
+  // Fit the map to a layer when it appears (not when the others change, and not for a layer with no feature). The layers
+  // the tools add are fitted (or not) by the tool executor, which marks them as fitted.
   $effect(() => {
     if (!map) return;
-    const bounds = pickFitBounds(mapState.layers, fitted);
+    const bounds = pickFitBounds(mapState.layers, fittedLayerIds);
     if (bounds) {
       map.fitBounds(bounds, { padding: mapConfig.fitPaddingPx, maxZoom: mapConfig.fitMaxZoom, duration: mapConfig.fitDurationMs });
     }

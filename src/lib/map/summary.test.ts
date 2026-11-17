@@ -75,14 +75,16 @@ describe('buildMapContext', () => {
   it('shows one long value as the same text in the overrides and in the categories (one numbering)', () => {
     const prefix = 'あ'.repeat(mapConfig.summaryMaxStringChars + 5);
     const [a, b, c] = ['a', 'b', 'c'].map((tail) => `${prefix}${tail}`);
-    // The overrides name b and c, the data has a and b: a `…#n` must mean one value in both places.
-    const state = layer(1, [a, b].map((kind) => ({ kind })), { type: 'categorized', column: 'kind', overrides: { [b]: '#ff0000', [c]: '#00ff00' } });
+    // The overrides name b and c, the data has a and b (b twice, so it is the first category): the override key of b and the category value of b are the same clipped string.
+    const state = layer(1, [a, b, b].map((kind) => ({ kind })), { type: 'categorized', column: 'kind', overrides: { [b]: '#ff0000', [c]: '#00ff00' } });
     const [first] = detailed(buildMapContext(view, [state]));
     const overrideKeys = Object.keys(first.style.type === 'categorized' ? (first.style.overrides ?? {}) : {});
     const categoryValues = first.applied.type === 'categorized' ? first.applied.categories.map(({ value }) => value) : [];
-    const all = new Set([...overrideKeys, ...categoryValues]);
-    expect(all.size).toBe(3);
-    expect(overrideKeys.filter((key) => categoryValues.includes(key))).toHaveLength(1);
+    const [bShown, cShown] = overrideKeys;
+    const [bCategory, aCategory] = categoryValues;
+    expect(bShown).toBe(bCategory);
+    expect(new Set([bShown, cShown, aCategory]).size).toBe(3);
+    for (const text of [bShown, cShown, aCategory]) expect(text.endsWith('…') || /…#\d+$/.test(text)).toBe(true);
   });
 
   it('lists at most the configured columns, counts them all, and leaves out (never cuts) a column with a long name', () => {

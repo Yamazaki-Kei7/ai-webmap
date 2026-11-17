@@ -56,6 +56,9 @@ function summarizeLayer(layer: LayerState): MapContextLayer {
   };
 }
 
+/** The `applied` of one layer as `<map_state>` shows it (the same numbering of cut values), for the tool answers that report it. */
+export const summarizeLayerApplied = (layer: LayerState): AppliedStyle => summarizeLayer(layer).applied;
+
 const isDetailed = (layer: MapContext['layers'][number]): layer is MapContextLayer => 'columns' in layer;
 
 /** Maps the detailed layers of a context (the others stay as they are). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipDistinct, clipTexts } from './clip';
+import { clipDistinct, clipTexts, truncate } from './clip';
 
 describe('clipDistinct', () => {
   it('leaves short texts alone and ends a cut text in an ellipsis within the limit', () => {
@@ -18,6 +18,30 @@ describe('clipDistinct', () => {
 
   it('does not let a cut text take the place of a short text that already looks like it', () => {
     expect(new Set(clipDistinct(['abcde…', 'abcdefghij'], 6)).size).toBe(2);
+  });
+});
+
+describe('cutting by code points', () => {
+  const hasLoneSurrogate = (text: string): boolean => /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(text);
+
+  it('truncate counts an emoji as one character and never leaves half of it', () => {
+    const text = '😀'.repeat(10);
+    const cut = truncate(text, 5);
+    expect(Array.from(cut)).toHaveLength(5);
+    expect(cut).toBe(`${'😀'.repeat(4)}…`);
+    expect(hasLoneSurrogate(cut)).toBe(false);
+    expect(truncate('😀😀😀', 3)).toBe('😀😀😀');
+  });
+
+  it('clipDistinct keeps short emoji texts whole and cuts long ones without a lone surrogate, also with a #n suffix', () => {
+    const texts = Array.from({ length: 12 }, (_, i) => `😀`.repeat(20) + i);
+    const shown = clipDistinct([...texts, '😀😀'], 8);
+    expect(new Set(shown).size).toBe(13);
+    for (const text of shown) {
+      expect(Array.from(text).length).toBeLessThanOrEqual(8);
+      expect(hasLoneSurrogate(text)).toBe(false);
+    }
+    expect(shown.at(-1)).toBe('😀😀');
   });
 });
 

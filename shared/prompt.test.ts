@@ -154,6 +154,9 @@ describe('buildSystemPrompt: content', () => {
   it('tells to filter coarsely in degrees before measuring in metres, with the rule for the degrees', () => {
     expect(prompt).toContain('先に ST_DWithin(a.geom, b.geom, 度) で粗く絞り');
     expect(prompt).toContain('a.pref_name = b.pref_name');
+    // The wide-area sentence: restrict the pairs by prefecture for a nationwide search, and not when the question crosses prefectures.
+    expect(prompt).toContain('全国など広い範囲では、さらに a.pref_name = b.pref_name で組を絞ります');
+    expect(prompt).toContain('県をまたぐ近さを聞かれたときは付けません');
     expect(prompt).toContain('県境をまたぐ組は落ちます');
     expect(prompt).toContain(`メートル ÷ ${promptConfig.coarseMetresPerDegree}`);
     expect(prompt).toContain('TIMEOUT');

@@ -5,27 +5,33 @@
 
 export const ellipsis = '…';
 
-export const truncate = (text: string, maxChars: number): string => (text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}${ellipsis}`);
+/** The length of a text in characters (code points: an emoji counts as one, and a cut never leaves half of one). */
+const lengthOf = (text: string): number => Array.from(text).length;
+
+/** The first `count` characters (code points) of a text. */
+const head = (text: string, count: number): string => Array.from(text).slice(0, Math.max(count, 0)).join('');
+
+export const truncate = (text: string, maxChars: number): string => (lengthOf(text) <= maxChars ? text : `${head(text, maxChars - 1)}${ellipsis}`);
 
 /**
- * Cuts each text to `maxChars` characters, ending in "…", and keeps the results apart: a cut text that would come out
+ * Cuts each text to `maxChars` characters (code points), ending in "…", and keeps the results apart: a cut text that would come out
  * like another text gets `#n` before the end, so two values are never merged into one.
  */
 export function clipDistinct(texts: readonly string[], maxChars: number): string[] {
   const cut = texts.map((text) => truncate(text, maxChars));
   const occurrences = new Map<string, number>();
   for (const shown of cut) occurrences.set(shown, (occurrences.get(shown) ?? 0) + 1);
-  const taken = new Set(texts.filter((text) => text.length <= maxChars));
+  const taken = new Set(texts.filter((text) => lengthOf(text) <= maxChars));
   const numbered = new Map<string, number>();
   return texts.map((text, i) => {
-    if (text.length <= maxChars) return text;
+    if (lengthOf(text) <= maxChars) return text;
     if (occurrences.get(cut[i]) === 1 && !taken.has(cut[i])) return cut[i];
     let n = numbered.get(cut[i]) ?? 0;
     let unique: string;
     do {
       n++;
       const suffix = `#${n}`;
-      unique = `${text.slice(0, maxChars - 1 - suffix.length)}${ellipsis}${suffix}`;
+      unique = `${head(text, maxChars - 1 - suffix.length)}${ellipsis}${suffix}`;
     } while (taken.has(unique));
     numbered.set(cut[i], n);
     taken.add(unique);

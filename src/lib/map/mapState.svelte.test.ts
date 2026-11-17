@@ -7,8 +7,11 @@ import type { ClientToolResult } from '../../../shared/toolProtocol';
 import type { GeoJsonGeometry, JsonRow, LayerQueryResult } from '../duckdb/queryTypes';
 import {
   addLayer,
+  appliedOf,
   currentSession,
   getFeatures,
+  getLayer,
+  layerIds,
   mapState,
   removeLayer,
   replaceLayer,
@@ -417,6 +420,33 @@ describe('layer style and label', () => {
       expect(mapContextSchema.safeParse(summarizeForLlm()).success).toBe(true);
       setView(new LngLat(190, 35), 5);
       expect(mapContextSchema.safeParse(summarizeForLlm()).success).toBe(false);
+    });
+  });
+
+  describe('reading a layer for the tools', () => {
+    it('getLayer is a plain copy that later changes do not touch, and undefined for an unknown id', () => {
+      const layer = added({ name: 'a', sql: 's' }, result());
+      const copy = getLayer(layer.id);
+      expect(copy).toEqual($state.snapshot(layer));
+      setLabel(layer.id, { column: 'name' });
+      expect(copy?.label).toBeNull();
+      expect(getLayer('L999')).toBeUndefined();
+    });
+
+    it('layerIds lists the ids in list order', () => {
+      const first = added({ name: 'a', sql: 's' }, result());
+      const second = added({ name: 'b', sql: 's' }, result());
+      expect(layerIds()).toEqual([first.id, second.id]);
+      removeLayer(first.id);
+      expect(layerIds()).toEqual([second.id]);
+    });
+
+    it('appliedOf is what <map_state> says for the layer', () => {
+      const layer = added({ name: 'a', sql: 's', style: { type: 'categorized', column: 'name' } }, result());
+      const summary = summarizeForLlm().layers.find((l) => l.id === layer.id);
+      expect(appliedOf(layer.id)).toEqual(summary && 'applied' in summary ? summary.applied : undefined);
+      expect(appliedOf(layer.id)).toMatchObject({ type: 'categorized' });
+      expect(appliedOf('L999')).toBeUndefined();
     });
   });
 });
