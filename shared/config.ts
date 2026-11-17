@@ -54,6 +54,18 @@ export const toolConfig = {
   viewDecimals: 4
 } as const;
 
+/** Saved maps (`shared/persistedMap.ts`, `aws-blocks/maps*.ts`): the limits of one map and of one user's collection. */
+export const mapsConfig = {
+  /** Title length, in characters (Unicode code points). */
+  title: { minChars: 1, maxChars: 80 },
+  /** Most layers one saved map holds. */
+  maxLayers: 20,
+  /** The whole persisted state as JSON (UTF-8 bytes): well below the 400 KB of a table item, and a layer's SQL (`queryConfig.maxSqlChars`) alone may not fill it. */
+  maxStateBytes: 64 * 1024,
+  /** Most maps one user keeps; saving a new one beyond it is refused (409). Listing reads all of them, so the cap also bounds that read. */
+  maxMapsPerUser: 100
+} as const;
+
 /** The system prompt (`shared/prompt.ts`). */
 export const promptConfig = {
   /** Longest system prompt, in characters: it is sent with every model call. */

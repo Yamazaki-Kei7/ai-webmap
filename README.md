@@ -88,6 +88,17 @@ SQL ボックスの下にスタイルボックスもあります。レイヤー�
 
 どれも、サインイン、利用許可の一覧、引数の検査（400）、会話の所有者の確認（他人の会話と存在しない会話は、どちらも 404）の順に確かめます。Agent ブロックは所有者を確認しないので、確認はここにあります。所有者は、会話 ID を発行するときに `KVStore`（`aws-blocks/conversation-owners.ts`、会話 ID から利用者名）へ記録し、確認は 1 回の `get` です。`agentResume` は、保留中の interrupt の ID だけを受け付けます（偽の ID、重複、答え済みの ID は 409 `InterruptNotPendingException`。保存先は結果整合なので、ブラウザは短い間をあけて 1 回だけやり直してよい）。保留中の interrupt があるときの `agentStream` も 409 `InterruptsPendingException` です。`runQuery`、`addLayer`、`setLayerStyle` の結果は、Agent ブロックが untrusted のデータとして包みます。`<map_state>` の JSON は `<` を `\u003c` にし、発言の中の `<map_state` は全角の `＜` に置き換えます。上限は `shared/config.ts` の `agentConfig`、`mapConfig`、`resultConfig` です。開発サーバーは RPC の引数をそのまま標準出力に出すので、開発ログに発言やクエリ結果が残ります。
 
+#### 保存した地図の API（`api` の `saveMap` など）
+
+| メソッド | 内容 |
+|------|------|
+| `saveMap({ mapId?, title, state, conversationId? })` | `mapId` がなければ新規、あれば自分の地図の上書き。`{ mapId, updatedAt }` を返す |
+| `listMaps()` | 自分の地図を、新しく保存した順に（`state` なしで）返す |
+| `getMap(mapId)` | 自分の地図 1 件（`state` を含む） |
+| `deleteMap(mapId)` | 自分の地図を削除 |
+
+`state` は `shared/persistedMap.ts` の `persistedMapStateSchema`（`version: 1`、表示範囲、レイヤー（id、名前、SQL、スタイル、ラベル、表示/非表示）、`nextLayerSeq`）です。地物は保存せず、復元はレイヤーの SQL を実行し直します。上限は `shared/config.ts` の `mapsConfig`（タイトル 1〜80 文字、レイヤー 20 枚、`state` の JSON 64 KiB、1 人 100 件）です。順序は、サインイン、利用許可の一覧、引数の検査（400 `InvalidMapRequestException`）、`conversationId` があればその所有者の確認（他人の会話と存在しない会話は、会話 API の 404 `ConversationNotFoundException`。形式が不正なら 400 `InvalidMapRequestException`）、保存先の操作です。各レイヤーの SQL は SQL ガードにも通し（却下は、レイヤーの id を挙げた 400）、復元のときにブラウザがもう一度ガードします。保存先は `DistributedTable`（`aws-blocks/maps-table.ts`。パーティションキーは `userId`、ソートキーは `mapId`）で、`userId` は常にサインインした利用者の名前であり、クライアントの引数からは取りません。他人の地図と存在しない地図は、どちらも 404 `MapNotFoundException` です。上書きは、読んだときの `updatedAt` が変わっていないときだけ書き（`ifFieldEquals`）、削除は 1 回の条件付き削除（`ifExists`、なければ 404）なので、削除した地図が上書きで戻ることも、新しい保存を黙って上書きすることもなく、競合は 409 `MapConflictException`（「開き直してから保存し直す」）です。保存し直し（`mapId` つき）は地図全体を置き換えるので、会話を残すなら `conversationId` をもう一度渡します。100 件を超える新規保存は 409 `MapLimitReachedException`（同時の新規保存は、その数だけ超えることがあります）、保存された内容がスキーマに合わない地図の `getMap` は 500 `MapCorruptException` です。エラー名は `shared/maps.ts` にあります。テーブルは、ローカルでは開発サーバーのモックが作り、デプロイ先では最初のデプロイで作られます（まだデプロイしていないので、AWS では未確認です）。AWS では、読み取りが結果整合（ブロックに強い整合性の読み取りがありません）なので、作ったばかりの地図を読むと一度 404 になることがあります。一覧は 1 人分の全件（状態を含む、最大 100 件）を読みます。
+
 ### 管理者の一覧
 
 管理者の一覧は、データファイルのアップロード用の署名付き URL を発行する `api.createDatasetUpload` だけを制御します。呼べるのは、利用許可の一覧にも入っている管理者だけです（利用許可がなければ `NotAllowedException`、許可されていても管理者でなければ 403 の `AdminRequiredException`）。管理者の一覧も、未設定や壊れた値は空として扱われます。
@@ -256,6 +267,7 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 | `aws-blocks/datasets.ts` | データのバケット（`FileBucket`）と署名付き URL の発行 |
 | `aws-blocks/agent.ts`、`agent-tools.ts`、`agent-canned.ts` | Agent ブロックと 6 つのツールの処理、`canned` モデル用の入力（ツールの処理と入力は Building Block を作らない関数。単体テストあり） |
 | `aws-blocks/conversation.ts`、`conversation-input.ts`、`conversation-access.ts`、`conversation-owners.ts` | 会話の API、引数の検査、所有者の確認（後ろ 2 つは単体テストあり） |
+| `aws-blocks/maps.ts`、`maps-input.ts`、`maps-access.ts`、`maps-table.ts` | 保存した地図の API、引数の検査、所有者を限った読み書き、テーブル（`maps-input.ts`、`maps-access.ts` は単体テストあり） |
 | `aws-blocks/user-list.ts`、`llm-mode.ts` | 一覧の解析と `AGENT_LOCAL_MODEL` の解析（Building Block を作らない関数。単体テストあり） |
 | `aws-blocks/auth.ts` | `AuthBasic` のインスタンス。`signUp` を公開する `auth.createApi()` / `auth.buildApi()` の戻り値はどこからも export しない |
 | `aws-blocks/scope.ts` | `Scope`（`ai-webmap`）。ローカルの保存先 `.bb-data/` のディレクトリ名の元 |

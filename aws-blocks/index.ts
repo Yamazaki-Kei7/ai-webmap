@@ -15,6 +15,7 @@ import { auth } from './auth.js';
 import { conversationMethods } from './conversation.js';
 import { signedDownloadUrl, signedUploadUrl } from './datasets.js';
 import { type LlmMode } from './llm-mode.js';
+import { mapsMethods } from './maps.js';
 import { llmMode } from './runtime-config.js';
 import { scope } from './scope.js';
 import {
@@ -121,4 +122,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   // The chat's conversation API (`aws-blocks/conversation.ts`): the same access check, then ownership of the conversation.
   ...conversationMethods(context),
+
+  // The saved maps (`aws-blocks/maps.ts`): the same access check, then only the signed-in user's own records.
+  ...mapsMethods(context),
 }));
