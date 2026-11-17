@@ -130,6 +130,48 @@ export const styleConfig = {
   labelDefaults: { size: 12, color: '#222222', haloColor: '#ffffff', haloWidth: 1.5, minZoom: 0 }
 } as const;
 
+/** The legend and the data attribution shown with the layers (`src/lib/map/legend.ts`, `src/lib/components/`). */
+export const legendConfig = {
+  /** Locale of every number in the layer panel (digit grouping). */
+  numberLocale: 'ja-JP',
+  /** A legend number shows at most this many decimals, or this many significant digits when that is more precise (small values keep their digits). */
+  maxFractionDigits: 2,
+  maxSignificantDigits: 2,
+  text: {
+    other: 'その他',
+    noData: '値なし',
+    emptyValue: '（空）',
+    /** Class intervals are half-open: "a 以上 b 未満", and the top class "a 以上". */
+    atLeast: '以上',
+    lessThan: '未満',
+    /** A class (from manual breaks) that no data falls in. */
+    noMatch: '（該当なし）',
+    /** The note when the proportional symbols are drawn smaller than on the map; `{n}` is the factor. */
+    scaleNote: '縮尺：地図の 1/{n}'
+  },
+  /** The legend draws a proportional symbol with a radius of at most this many pixels; larger ones are all scaled down by one factor. */
+  maxSymbolRadiusPx: 36,
+  /** The factor of the scale note is shown with this many decimals. */
+  scaleNoteDecimals: 1,
+  /** The data attribution: a line that is always shown while a layer is, and the list of sources behind its toggle. */
+  attribution: {
+    /** `{publisher}` is the first publisher (`attribution.ts`); `{n}` the number of the other publishers. */
+    line: '出典：{publisher}を加工して作成',
+    lineMore: '出典：{publisher}ほか {n} 件を加工して作成',
+    /** The licence label (the catalog's own `license` field is an internal note and is not shown). */
+    licenseLabel: 'CC BY 4.0',
+    details: '詳細',
+    /** Most height (pixels) of the list of sources; it scrolls beyond. */
+    maxListPx: 160
+  }
+} as const;
+
+/** Layout values of the app shell. */
+export const layoutConfig = {
+  /** At or below this viewport width (pixels): header, map and chat dock are stacked, and the layer panel starts collapsed. */
+  narrowViewportMaxPx: 640
+} as const;
+
 const initialCenter: [number, number] = [137.0, 38.0];
 
 export const mapConfig = {

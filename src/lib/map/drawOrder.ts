@@ -11,6 +11,11 @@ export function inDrawOrder<T extends Ordered>(layers: readonly T[]): T[] {
   return [...layers].sort((a, b) => familyRank[a.geometryType] - familyRank[b.geometryType]);
 }
 
+/** The layers as a list shows them: the top of the map first (points above lines above polygons, the newest first within a family). */
+export function inTopDownOrder<T extends Ordered>(layers: readonly T[]): T[] {
+  return inDrawOrder(layers).reverse();
+}
+
 /** The map ids a layer gets: its GeoJSON source, and its map layers (a polygon has a fill and an outline). */
 export function mapLayerIds(layerId: string) {
   return {

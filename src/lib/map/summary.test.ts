@@ -29,6 +29,7 @@ function layer(
     id: `L${n}`,
     name: `layer ${n}`,
     sql: 'SELECT * FROM t',
+    datasetIds: [],
     geometryType: 'point',
     columns: names.map((name) => ({ name, type: typeof rows[0][name] === 'number' ? 'number' : 'string' })),
     featureCount: rows.length,

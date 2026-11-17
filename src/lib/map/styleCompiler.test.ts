@@ -288,8 +288,13 @@ describe('resolveStyle: proportional', () => {
       max: 100,
       minRadius: styleConfig.defaults.minRadius,
       maxRadius: styleConfig.defaults.maxRadius,
+      nullCount: 0,
       common: defaultCommonFor('point')
     });
+  });
+
+  it('counts the features without a number', () => {
+    expect(resolved(style, [...prices, { price: null, name: 'x' }, { price: 'n/a', name: 'y' }])).toMatchObject({ nullCount: 2 });
   });
 
   it('takes the radii of the style', () => {

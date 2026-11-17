@@ -1,6 +1,8 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { mapConfig } from '../../../shared/config';
 import type { GeometryFamily, LabelSpec, MapContext, StyleSpec } from '../../../shared/mapSpec';
+import { datasetIds } from '../../../shared/datasets';
+import { validateSql } from '../../../shared/sqlGuard';
 import { toolError, type ClientToolResult } from '../../../shared/toolProtocol';
 import type { Bbox, ColumnInfo, GeoJsonFeatureCollection, LayerQueryResult } from '../duckdb/queryTypes';
 import { checkLabel, resolveStyle, type ResolvedStyle } from './styleCompiler';
@@ -15,6 +17,8 @@ export type LayerState = {
   name: string;
   /** The guarded SQL that produced it. */
   sql: string;
+  /** The datasets the SQL reads (each once): where the data attribution comes from. */
+  datasetIds: string[];
   geometryType: GeometryFamily;
   columns: ColumnInfo[];
   featureCount: number;
@@ -51,6 +55,12 @@ export const mapState: MapState = $state({
 let session = 0;
 
 const featuresByLayer = new SvelteMap<string, GeoJsonFeatureCollection>();
+
+/** The datasets a query reads; the SQL has been guarded already, so this is a lookup (a text that does not pass reads none). */
+function datasetsOf(sql: string): string[] {
+  const guarded = validateSql(sql, datasetIds);
+  return guarded.ok ? guarded.tables : [];
+}
 
 const layerSeq = (layerId: string): number => Number(layerId.slice(1));
 
@@ -94,6 +104,7 @@ export function addLayer(input: NewLayer, data: LayerQueryResult): ClientToolRes
     id: `L${seq}`,
     name: input.name,
     sql: input.sql,
+    datasetIds: datasetsOf(input.sql),
     geometryType: data.geometryType,
     columns: data.columns,
     featureCount: data.featureCount,
@@ -126,6 +137,7 @@ export function replaceLayer(layerId: string, input: NewLayer, data: LayerQueryR
   featuresByLayer.set(layerId, data.features);
   layer.name = input.name;
   layer.sql = input.sql;
+  layer.datasetIds = datasetsOf(input.sql);
   layer.geometryType = data.geometryType;
   layer.columns = data.columns;
   layer.featureCount = data.featureCount;

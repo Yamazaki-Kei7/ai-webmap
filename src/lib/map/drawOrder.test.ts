@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GeometryFamily } from '../../../shared/mapSpec';
-import { beforeLabelLayerId, beforeMapLayerId, bottomMapLayerId, inDrawOrder, labelMapLayerIds, mapLayerIds } from './drawOrder';
+import { beforeLabelLayerId, beforeMapLayerId, bottomMapLayerId, inDrawOrder, inTopDownOrder, labelMapLayerIds, mapLayerIds } from './drawOrder';
 
 describe('inDrawOrder', () => {
   it('puts polygons below lines below points, and keeps the order added within a family', () => {
@@ -12,6 +12,21 @@ describe('inDrawOrder', () => {
       { id: 'L5', geometryType: 'point' as const }
     ];
     expect(inDrawOrder(layers).map((l) => l.id)).toEqual(['L2', 'L4', 'L3', 'L1', 'L5']);
+    expect(layers[0].id).toBe('L1');
+  });
+});
+
+describe('inTopDownOrder', () => {
+  it('is the draw order read from the top: points first, the newest first within a family', () => {
+    const layers = [
+      { id: 'L1', geometryType: 'point' as const },
+      { id: 'L2', geometryType: 'polygon' as const },
+      { id: 'L3', geometryType: 'line' as const },
+      { id: 'L4', geometryType: 'polygon' as const },
+      { id: 'L5', geometryType: 'point' as const }
+    ];
+    expect(inTopDownOrder(layers).map((l) => l.id)).toEqual(['L5', 'L1', 'L3', 'L4', 'L2']);
+    expect(inTopDownOrder(layers).map((l) => l.id)).toEqual(inDrawOrder(layers).map((l) => l.id).reverse());
     expect(layers[0].id).toBe('L1');
   });
 });

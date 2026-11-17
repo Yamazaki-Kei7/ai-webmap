@@ -62,6 +62,8 @@ export type ResolvedStyle =
       /** Radii in pixels; the symbol's radius follows the square root of the value (Task 3.3). */
       minRadius: number;
       maxRadius: number;
+      /** The features without a usable number: drawn in the no-data colour, small. */
+      nullCount: number;
       common: ResolvedCommon;
     };
 
@@ -192,7 +194,7 @@ export function resolveStyle(
     if (minRadius >= maxRadius) {
       return toolError('INVALID_STYLE', `minRadius (${minRadius}) must be smaller than maxRadius (${maxRadius}).`);
     }
-    return { ok: true, data: { type: 'proportional', column: style.column, color: style.color, min, max, minRadius, maxRadius, common } };
+    return { ok: true, data: { type: 'proportional', column: style.column, color: style.color, min, max, minRadius, maxRadius, nullCount, common } };
   }
 
   const breaks =

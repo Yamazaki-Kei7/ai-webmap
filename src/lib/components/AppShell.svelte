@@ -7,10 +7,12 @@
   import { restartEngine, type EngineStatus } from '$lib/duckdb/engine';
   import { runEngine } from '$lib/duckdb/engineEffect.svelte';
   import { isRetryableMessage } from '$lib/duckdb/errors';
+  import DataAttribution from './DataAttribution.svelte';
   import DevSqlBox from './DevSqlBox.svelte';
   import DevStyleBox from './DevStyleBox.svelte';
-  import LayerList from './LayerList.svelte';
+  import LayerPanel from './LayerPanel.svelte';
   import MapView from './MapView.svelte';
+  import { narrowViewport } from './narrowViewport';
 
   let {
     title,
@@ -25,6 +27,25 @@
   } = $props();
 
   let dockOpen = $state(true);
+
+  // MapLibre's own attribution sits at the bottom right (two lines when opened on a narrow map). Where it reaches under the left
+  // column, the data attribution is lifted above it, so that the two never cover each other; elsewhere it stays at the bottom edge.
+  let leftColumn: HTMLElement | undefined = $state();
+  let liftPx = $state(0);
+  $effect(() => {
+    const container = map?.getContainer();
+    const corner = container?.querySelector('.maplibregl-ctrl-bottom-right');
+    if (!container || !corner || !leftColumn) return;
+    const column = leftColumn;
+    const measure = () => {
+      const overlaps = corner.getBoundingClientRect().left < column.getBoundingClientRect().right;
+      liftPx = overlaps ? corner.getBoundingClientRect().height : 0;
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(corner);
+    observer.observe(container);
+    return () => observer.disconnect();
+  });
 </script>
 
 <div class="flex h-dvh flex-col">
@@ -52,24 +73,34 @@
     <div {@attach mountNode(() => AccountMenuBar(authApi))}></div>
   </header>
 
-  <div class="relative min-h-0 flex-1">
-    <MapView bind:map />
+  <!-- One dock for both layouts, so that its content survives a resize across the breakpoint. Wide: it floats over the map at the right;
+       narrow: header, map and dock are stacked, and the dock is below the map. -->
+  <div class="relative flex min-h-0 flex-1 flex-col">
+    <div class="relative min-h-0 flex-1">
+      <MapView bind:map />
 
-    <!-- Left overlay: Phase 3 replaces this list with the layer cards. -->
-    <aside
-      class="absolute top-3 left-3 flex max-h-[calc(100%-1.5rem)] w-72 flex-col gap-3 overflow-y-auto rounded border border-bb-border bg-bb-surface p-3 shadow"
-      data-testid="layer-panel"
-    >
-      {#if import.meta.env.DEV}
-        <DevSqlBox ready={engineStatus.state === 'ready'} />
-        <DevStyleBox />
-      {/if}
-      <LayerList />
-    </aside>
+      <!-- Left column over the map: the layer panel (shrinks and scrolls when tall) above the data attribution. -->
+      <div
+        bind:this={leftColumn}
+        class={['pointer-events-none absolute top-3 left-3 flex flex-col justify-between gap-2', narrowViewport.current ? 'right-12' : 'w-72']}
+        style:bottom="{liftPx + 8}px"
+      >
+        <LayerPanel>
+          {#if import.meta.env.DEV}
+            <DevSqlBox ready={engineStatus.state === 'ready'} />
+            <DevStyleBox />
+          {/if}
+        </LayerPanel>
+        <DataAttribution />
+      </div>
+    </div>
 
-    <!-- Right dock: Phase 4 puts the chat here. -->
+    <!-- Phase 4 puts the chat here. -->
     <aside
-      class="absolute top-3 right-3 flex w-80 flex-col rounded border border-bb-border bg-bb-surface shadow"
+      class={[
+        'flex flex-col border-bb-border bg-bb-surface shadow',
+        narrowViewport.current ? 'border-t' : 'absolute top-3 right-3 w-80 rounded border'
+      ]}
       data-testid="chat-dock"
     >
       <button

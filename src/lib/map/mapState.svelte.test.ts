@@ -61,6 +61,20 @@ describe('mapState', () => {
     expect(mapState.layers.map((l) => l.id)).toEqual([layer.id]);
   });
 
+  it('records the datasets the SQL reads: one, both of a join, each once', () => {
+    const one = added({ name: 'a', sql: 'SELECT * FROM stations' }, result());
+    const join = added(
+      { name: 'b', sql: 'SELECT s.* FROM stations s JOIN municipalities m ON m.muni_code = s.muni_code JOIN stations t ON true' },
+      result()
+    );
+    expect(one.datasetIds).toEqual(['stations']);
+    expect([...join.datasetIds].sort()).toEqual(['municipalities', 'stations']);
+  });
+
+  it('records no dataset for SQL that reads none', () => {
+    expect(added({ name: 'a', sql: 'SELECT 1' }, result()).datasetIds).toEqual([]);
+  });
+
   it('numbers ids upwards and never reuses one after a removal', () => {
     const a = added({ name: 'a', sql: 's' }, result());
     const b = added({ name: 'b', sql: 's' }, result());
@@ -303,6 +317,12 @@ describe('layer style and label', () => {
       expect(mapState.layers.map((l) => l.id)).toEqual([a.id, b.id, c.id]);
       expect(mapState.layers[1]).toMatchObject({ name: 'b2', sql: 'new', visible: false, featureCount: 1 });
       expect(getFeatures(b.id)).toBe(fresh.features);
+    });
+
+    it('takes the datasets of the new SQL', () => {
+      const layer = added({ name: 'a', sql: 'SELECT * FROM stations' }, people);
+      replaceLayer(layer.id, { name: 'a', sql: 'SELECT * FROM railways' }, people);
+      expect(layer.datasetIds).toEqual(['railways']);
     });
 
     it('keeps the old style and label while they fit the new data', () => {
