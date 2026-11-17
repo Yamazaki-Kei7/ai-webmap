@@ -133,11 +133,14 @@ export const labelSpecSchema = z.strictObject({
 
 export type LabelSpec = z.infer<typeof labelSpecSchema>;
 
+/** A layer id: "L" and a number ("L1"). The browser makes them; the tools and view targets name them. */
+export const layerIdPattern = /^L\d+$/;
+
 const longitudeSchema = z.number().min(-180).max(180);
 const latitudeSchema = z.number().min(-90).max(90);
 
 export const viewTargetSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('layer'), layerId: z.string().min(1).max(styleConfig.maxLayerIdChars) }),
+  z.strictObject({ type: z.literal('layer'), layerId: z.string().max(styleConfig.maxLayerIdChars).regex(layerIdPattern, 'A layer id looks like "L1".') }),
   z
     .strictObject({
       type: z.literal('bbox'),

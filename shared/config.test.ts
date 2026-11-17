@@ -6,9 +6,11 @@ import {
   dataConfig,
   engineConfig,
   mapConfig,
+  promptConfig,
   queryConfig,
   resultConfig,
   styleConfig,
+  toolConfig,
   urlConfig
 } from './config';
 
@@ -35,7 +37,14 @@ describe('config invariants', () => {
       engineConfig.maxErrorChars,
       agentConfig.maxLlmCalls,
       agentConfig.maxToolIterations,
-      agentConfig.maxUtteranceChars
+      agentConfig.maxUtteranceChars,
+      toolConfig.maxLayerNameChars,
+      toolConfig.maxQueryColumns,
+      toolConfig.maxResultLayers,
+      promptConfig.maxChars,
+      promptConfig.maxRepeatedFailures,
+      promptConfig.coarseMetresPerDegree,
+      promptConfig.approxMetresPerDegree
     ];
     for (const value of numbers) expect(value).toBeGreaterThan(0);
   });

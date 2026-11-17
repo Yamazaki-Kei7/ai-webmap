@@ -1,3 +1,4 @@
+import { clipDistinct, clipTexts, truncate } from '../../../shared/clip';
 import { mapConfig } from '../../../shared/config';
 import type { AppliedStyle, MapContext, MapContextLayer, StyleSpec } from '../../../shared/mapSpec';
 import type { LayerState, MapState } from './mapState.svelte';
@@ -11,57 +12,31 @@ import { summarizeResolved } from './styleCompiler';
 
 const bytesOf = (context: MapContext): number => new TextEncoder().encode(JSON.stringify(context)).length;
 
-const ellipsis = '…';
-
-const truncate = (text: string, maxChars: number): string => (text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}${ellipsis}`);
-
-/**
- * Cuts each text to `maxChars` characters, ending in "…", and keeps the results apart: a cut text that would come out
- * like another text gets `#n` before the end, so two values are never merged into one.
- */
-export function clipDistinct(texts: readonly string[], maxChars: number): string[] {
-  const cut = texts.map((text) => truncate(text, maxChars));
-  const occurrences = new Map<string, number>();
-  for (const shown of cut) occurrences.set(shown, (occurrences.get(shown) ?? 0) + 1);
-  const taken = new Set(texts.filter((text) => text.length <= maxChars));
-  const numbered = new Map<string, number>();
-  return texts.map((text, i) => {
-    if (text.length <= maxChars) return text;
-    if (occurrences.get(cut[i]) === 1 && !taken.has(cut[i])) return cut[i];
-    let n = numbered.get(cut[i]) ?? 0;
-    let unique: string;
-    do {
-      n++;
-      const suffix = `#${n}`;
-      unique = `${text.slice(0, maxChars - 1 - suffix.length)}${ellipsis}${suffix}`;
-    } while (taken.has(unique));
-    numbered.set(cut[i], n);
-    taken.add(unique);
-    return unique;
-  });
-}
-
 const clip = (text: string): string => clipDistinct([text], mapConfig.summaryMaxStringChars)[0];
 
-/** The style as the model gave it, with the override values cut (and kept distinct). */
-function summarizeStyle(style: StyleSpec): StyleSpec {
+/** The style as the model gave it, with the override values cut (and kept distinct, with the same text for the same value as in `applied`). */
+function summarizeStyle(style: StyleSpec, shown: ReadonlyMap<string, string>): StyleSpec {
   if (style.type !== 'categorized' || !style.overrides) return style;
-  const entries = Object.entries(style.overrides);
-  const shown = clipDistinct(entries.map(([value]) => value), mapConfig.summaryMaxStringChars);
-  return { ...style, overrides: Object.fromEntries(entries.map(([, color], i) => [shown[i], color])) };
+  return { ...style, overrides: Object.fromEntries(Object.entries(style.overrides).map(([value, color]) => [shown.get(value) ?? value, color])) };
 }
 
-function summarizeApplied(applied: AppliedStyle): AppliedStyle {
+function summarizeApplied(applied: AppliedStyle, shown: ReadonlyMap<string, string>): AppliedStyle {
   if (applied.type !== 'categorized') return applied;
-  const shown = clipDistinct(applied.categories.map(({ value }) => value), mapConfig.summaryMaxStringChars);
   return {
     ...applied,
-    categories: applied.categories.map((category, i) => ({ ...category, value: shown[i] })),
+    categories: applied.categories.map((category) => ({ ...category, value: shown.get(category.value) ?? category.value })),
     warnings: applied.warnings.slice(0, mapConfig.summaryMaxWarnings).map((warning) => truncate(warning, mapConfig.summaryMaxWarningChars))
   };
 }
 
 function summarizeLayer(layer: LayerState): MapContextLayer {
+  const resolved = summarizeResolved(layer.resolved);
+  // One numbering for the values of the overrides and of the categories: the same `…#1` is the same value in both.
+  const values = [
+    ...(layer.style.type === 'categorized' ? Object.keys(layer.style.overrides ?? {}) : []),
+    ...(resolved.type === 'categorized' ? resolved.categories.map(({ value }) => value) : [])
+  ];
+  const shown = clipTexts(values, mapConfig.summaryMaxStringChars);
   return {
     id: layer.id,
     name: clip(layer.name),
@@ -75,9 +50,9 @@ function summarizeLayer(layer: LayerState): MapContextLayer {
       .slice(0, mapConfig.summaryMaxColumns)
       .map(({ name, type }) => ({ name, type })),
     columnCount: layer.columns.length,
-    style: summarizeStyle(layer.style),
+    style: summarizeStyle(layer.style, shown),
     label: layer.label,
-    applied: summarizeApplied(summarizeResolved(layer.resolved))
+    applied: summarizeApplied(resolved, shown)
   };
 }
 

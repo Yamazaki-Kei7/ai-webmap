@@ -4,7 +4,7 @@ import { mapContextSchema, type MapContext, type MapContextLayer, type StyleSpec
 import type { GeoJsonFeatureCollection } from '../duckdb/queryTypes';
 import type { LayerState } from './mapState.svelte';
 import { resolveStyle } from './styleCompiler';
-import { buildMapContext, clipDistinct } from './summary';
+import { buildMapContext } from './summary';
 
 const view = { center: [139.7, 35.7] as [number, number], zoom: 9 };
 const bytesOf = (context: MapContext) => new TextEncoder().encode(JSON.stringify(context)).length;
@@ -45,26 +45,6 @@ function layer(
 
 const kindRows = (count: number, tag = 'kind') => Array.from({ length: count }, (_, i) => ({ name: `n${i}`, kind: `${tag}${i}` }));
 
-describe('clipDistinct', () => {
-  it('leaves short texts alone and ends a cut text in an ellipsis within the limit', () => {
-    expect(clipDistinct(['abc', 'abcdefghij'], 6)).toEqual(['abc', 'abcde…']);
-  });
-
-  it('keeps texts with a shared long prefix apart, and marks every cut one', () => {
-    const texts = Array.from({ length: 12 }, (_, i) => `東京都千代田区丸の内一丁目の長い名称${i}`);
-    const shown = clipDistinct(texts, 12);
-    expect(new Set(shown).size).toBe(12);
-    for (const text of shown) {
-      expect(text.length).toBeLessThanOrEqual(12);
-      expect(text).toContain('…');
-    }
-  });
-
-  it('does not let a cut text take the place of a short text that already looks like it', () => {
-    expect(new Set(clipDistinct(['abcde…', 'abcdefghij'], 6)).size).toBe(2);
-  });
-});
-
 describe('buildMapContext', () => {
   it('cuts the layer name, SQL, warnings and category values, and validates against the schema', () => {
     const long = 'あ'.repeat(mapConfig.summaryMaxStringChars * 3);
@@ -90,6 +70,19 @@ describe('buildMapContext', () => {
     const [first] = detailed(buildMapContext(view, [state]));
     expect(Object.keys(first.style.type === 'categorized' ? (first.style.overrides ?? {}) : {})).toHaveLength(12);
     expect(new Set(first.applied.type === 'categorized' ? first.applied.categories.map(({ value }) => value) : []).size).toBe(12);
+  });
+
+  it('shows one long value as the same text in the overrides and in the categories (one numbering)', () => {
+    const prefix = 'あ'.repeat(mapConfig.summaryMaxStringChars + 5);
+    const [a, b, c] = ['a', 'b', 'c'].map((tail) => `${prefix}${tail}`);
+    // The overrides name b and c, the data has a and b: a `…#n` must mean one value in both places.
+    const state = layer(1, [a, b].map((kind) => ({ kind })), { type: 'categorized', column: 'kind', overrides: { [b]: '#ff0000', [c]: '#00ff00' } });
+    const [first] = detailed(buildMapContext(view, [state]));
+    const overrideKeys = Object.keys(first.style.type === 'categorized' ? (first.style.overrides ?? {}) : {});
+    const categoryValues = first.applied.type === 'categorized' ? first.applied.categories.map(({ value }) => value) : [];
+    const all = new Set([...overrideKeys, ...categoryValues]);
+    expect(all.size).toBe(3);
+    expect(overrideKeys.filter((key) => categoryValues.includes(key))).toHaveLength(1);
   });
 
   it('lists at most the configured columns, counts them all, and leaves out (never cuts) a column with a long name', () => {

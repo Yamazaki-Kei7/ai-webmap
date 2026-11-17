@@ -30,6 +30,31 @@ export const resultConfig = {
   maxTotalResultBytes: 64 * 1024
 } as const;
 
+/**
+ * The six tools the model calls (`shared/toolProtocol.ts`): the limits of their inputs and of the results they answer with.
+ * The caps of columns, warnings and texts in an `addLayer` / `setLayerStyle` answer are the ones of the map summary (`mapConfig.summary*`).
+ */
+export const toolConfig = {
+  /** Longest layer name (characters) the model may give. */
+  maxLayerNameChars: 40,
+  /** Most columns a `runQuery` result lists (the others are left out of the columns and the rows). */
+  maxQueryColumns: 30,
+  /** Most layer ids `removeLayer` lists as remaining. */
+  maxResultLayers: 100
+} as const;
+
+/** The system prompt (`shared/prompt.ts`). */
+export const promptConfig = {
+  /** Longest system prompt, in characters: it is sent with every model call. */
+  maxChars: 40_000,
+  /** After this many failures of one kind in a row the model stops and tells the user. */
+  maxRepeatedFailures: 3,
+  /** A coarse `ST_DWithin` before a `_spheroid` test: metres divided by this are enough (a degree of longitude is at least about 78 km in Japan). */
+  coarseMetresPerDegree: 70_000,
+  /** `ST_DWithin` alone, for lines and polygons: metres divided by this give a degree value that is right within about 20 % in Japan. */
+  approxMetresPerDegree: 100_000
+} as const;
+
 export const urlConfig = {
   signedUrlTtlSeconds: 60 * 60,
   /** The browser fetches the dataset sources again before a lazy data fetch when the held URLs expire within this time. */

@@ -181,6 +181,7 @@ describe('viewTargetSchema', () => {
 
   it('rejects an empty layer id, an empty or too long sql, and unknown keys', () => {
     expect(viewTargetSchema.safeParse({ type: 'layer', layerId: '' }).success).toBe(false);
+    expect(viewTargetSchema.safeParse({ type: 'layer', layerId: 'layer-1' }).success).toBe(false);
     expect(viewTargetSchema.safeParse({ type: 'query', sql: '' }).success).toBe(false);
     expect(viewTargetSchema.safeParse({ type: 'query', sql: 'x'.repeat(queryConfig.maxSqlChars) }).success).toBe(true);
     expect(viewTargetSchema.safeParse({ type: 'query', sql: 'x'.repeat(queryConfig.maxSqlChars + 1) }).success).toBe(false);
