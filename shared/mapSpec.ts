@@ -158,3 +158,75 @@ export const viewTargetSchema = z.discriminatedUnion('type', [
 ]);
 
 export type ViewTarget = z.infer<typeof viewTargetSchema>;
+
+/*
+ * What the model is told about the map every turn (Task 3.3): the layers' facts and styles, never the features. The
+ * backend validates it (Phase 4), so the shape lives here.
+ */
+
+export const columnTypeSchema = z.enum(['string', 'number', 'boolean', 'other']);
+
+/** A short account of how a layer's style came out against its data: the colours the model sees on the map. */
+export const appliedStyleSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('single'), color: hexColorSchema }),
+  z.strictObject({
+    type: z.literal('categorized'),
+    column: z.string(),
+    /** The coloured categories, the most frequent first; values over `mapConfig.summaryMaxStringChars` end in "…". */
+    categories: z.array(z.strictObject({ value: z.string(), color: hexColorSchema, count: z.number().int() })),
+    /** How many coloured categories there are (the list can be shorter when the summary is shrunk). */
+    categoryCount: z.number().int(),
+    other: z.strictObject({ color: hexColorSchema, count: z.number().int() }).nullable(),
+    nullCount: z.number().int(),
+    warnings: z.array(z.string())
+  }),
+  z.strictObject({
+    type: z.literal('graduated'),
+    column: z.string(),
+    /** The internal class boundaries; `colors.length === breaks.length + 1`. */
+    breaks: z.array(z.number()),
+    colors: z.array(hexColorSchema),
+    min: z.number(),
+    max: z.number(),
+    nullCount: z.number().int()
+  }),
+  z.strictObject({
+    type: z.literal('proportional'),
+    column: z.string(),
+    color: hexColorSchema,
+    min: z.number(),
+    max: z.number(),
+    minRadius: z.number(),
+    maxRadius: z.number()
+  })
+]);
+
+export type AppliedStyle = z.infer<typeof appliedStyleSchema>;
+
+const contextLayerSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  geometryType: geometryFamilySchema,
+  featureCount: z.number().int(),
+  visible: z.boolean(),
+  /** The SQL that made the layer, cut to `mapConfig.summarySqlChars` characters. */
+  sql: z.string(),
+  /** The first columns (`mapConfig.summaryMaxColumns`; names too long to use are left out); `columnCount` tells how many the layer has. */
+  columns: z.array(z.strictObject({ name: z.string(), type: columnTypeSchema })),
+  columnCount: z.number().int(),
+  style: styleSpecSchema,
+  label: labelSpecSchema.nullable(),
+  applied: appliedStyleSchema
+});
+
+export const mapContextSchema = z.strictObject({
+  view: z.strictObject({ center: z.tuple([longitudeSchema, latitudeSchema]), zoom: z.number() }),
+  /** Layers beyond `mapConfig.summaryMaxLayers` (or dropped to fit) are only an id and a name. */
+  layers: z.array(z.union([contextLayerSchema, z.strictObject({ id: z.string(), name: z.string() })])),
+  /** Set when the summary had to be cut down to fit `mapConfig.summaryMaxBytes`. */
+  truncated: z.literal(true).optional()
+});
+
+export type MapContext = z.infer<typeof mapContextSchema>;
+
+export type MapContextLayer = z.infer<typeof contextLayerSchema>;

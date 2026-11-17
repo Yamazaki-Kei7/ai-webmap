@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dataConfig, queryConfig, styleConfig } from './config';
-import { labelSpecSchema, styleSpecSchema, viewTargetSchema } from './mapSpec';
+import { appliedStyleSchema, labelSpecSchema, mapContextSchema, styleSpecSchema, viewTargetSchema } from './mapSpec';
 
 const { minClasses, maxClasses, maxCategories } = dataConfig.classification;
 
@@ -185,5 +185,51 @@ describe('viewTargetSchema', () => {
     expect(viewTargetSchema.safeParse({ type: 'query', sql: 'x'.repeat(queryConfig.maxSqlChars) }).success).toBe(true);
     expect(viewTargetSchema.safeParse({ type: 'query', sql: 'x'.repeat(queryConfig.maxSqlChars + 1) }).success).toBe(false);
     expect(viewTargetSchema.safeParse({ type: 'layer', layerId: 'L1', zoom: 3 }).success).toBe(false);
+  });
+});
+
+describe('mapContextSchema', () => {
+  const layer = {
+    id: 'L1',
+    name: 'stations',
+    geometryType: 'point',
+    featureCount: 3,
+    visible: true,
+    sql: 'SELECT * FROM stations',
+    columns: [{ name: 'passengers', type: 'number' }],
+    columnCount: 1,
+    style: { type: 'proportional', column: 'passengers', color: '#336699' },
+    label: null,
+    applied: { type: 'proportional', column: 'passengers', color: '#336699', min: 1, max: 9, minRadius: 3, maxRadius: 30 }
+  };
+  const context = { view: { center: [139.7, 35.7], zoom: 9 }, layers: [layer] };
+
+  it('accepts a view with layers', () => {
+    expect(mapContextSchema.safeParse(context).success).toBe(true);
+    expect(mapContextSchema.safeParse({ ...context, layers: [] }).success).toBe(true);
+  });
+
+  it('accepts a layer reduced to an id and a name, and the truncated mark', () => {
+    expect(mapContextSchema.safeParse({ ...context, layers: [{ id: 'L2', name: 'rails' }], truncated: true }).success).toBe(true);
+    expect(mapContextSchema.safeParse({ ...context, truncated: false }).success).toBe(false);
+  });
+
+  it('refuses a layer that carries anything else, such as features', () => {
+    expect(mapContextSchema.safeParse({ ...context, layers: [{ ...layer, features: [] }] }).success).toBe(false);
+  });
+
+  it('refuses a column type or geometry family that does not exist', () => {
+    expect(mapContextSchema.safeParse({ ...context, layers: [{ ...layer, geometryType: 'volume' }] }).success).toBe(false);
+    expect(mapContextSchema.safeParse({ ...context, layers: [{ ...layer, columns: [{ name: 'a', type: 'date' }] }] }).success).toBe(false);
+  });
+
+  it('describes each style type that was applied', () => {
+    const applied = [
+      { type: 'single', color: '#112233' },
+      { type: 'categorized', column: 'k', categories: [{ value: 'a', color: '#112233', count: 2 }], categoryCount: 1, other: { color: '#9e9e9e', count: 1 }, nullCount: 0, warnings: [] },
+      { type: 'graduated', column: 'n', breaks: [5], colors: ['#112233', '#445566'], min: 1, max: 9, nullCount: 0 }
+    ];
+    for (const item of applied) expect(appliedStyleSchema.safeParse(item).success).toBe(true);
+    expect(appliedStyleSchema.safeParse({ type: 'graduated', column: 'n' }).success).toBe(false);
   });
 });

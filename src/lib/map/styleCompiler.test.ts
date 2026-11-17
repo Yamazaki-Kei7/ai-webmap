@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { dataConfig, styleConfig } from '../../../shared/config';
+import { dataConfig, mapConfig, styleConfig } from '../../../shared/config';
 import type { GeometryFamily, StyleSpec } from '../../../shared/mapSpec';
 import type { GeoJsonFeatureCollection, GeoJsonGeometry, JsonRow } from '../duckdb/queryTypes';
 import { qualitativeColors, sequentialColors } from './palettes';
-import { resolveStyle, type ResolvedStyle } from './styleCompiler';
+import { validateStyleMin, type StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
+import { checkLabel, resolveStyle, summarizeResolved, toMapLibreLayers, type MapLibreLayerSpec, type ResolvedStyle } from './styleCompiler';
 
 const { maxCategories } = dataConfig.classification;
 
@@ -34,19 +35,19 @@ function failed(style: StyleSpec, rows: JsonRow[], family: GeometryFamily = 'poi
 
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 const prices = Array.from({ length: 10 }, (_, i) => ({ price: (i + 1) * 10, name: `n${i}` }));
-const defaultCommon = {
-  opacity: styleConfig.defaults.opacity,
+const defaultCommonFor = (family: GeometryFamily) => ({
+  opacity: styleConfig.defaults.opacity[family],
   strokeColor: styleConfig.defaults.strokeColor,
   strokeWidth: styleConfig.defaults.strokeWidth,
-  size: styleConfig.defaults.size.point
-};
+  size: family === 'line' ? styleConfig.defaults.size.line : styleConfig.defaults.size.point
+});
 
 describe('resolveStyle: single', () => {
   it.each(['point', 'polygon'] as const)('resolves on %s with the defaults', (family) => {
     expect(resolved({ type: 'single', color: '#112233' }, [{ a: 1 }], family)).toEqual({
       type: 'single',
       color: '#112233',
-      common: defaultCommon
+      common: defaultCommonFor(family)
     });
   });
 
@@ -91,7 +92,7 @@ describe('resolveStyle: categorized', () => {
       nullCount: 1,
       nullColor: styleConfig.noDataColor,
       warnings: [],
-      common: { ...defaultCommon, size: family === 'line' ? styleConfig.defaults.size.line : defaultCommon.size }
+      common: defaultCommonFor(family)
     });
   });
 
@@ -161,6 +162,18 @@ describe('resolveStyle: categorized', () => {
     expect(data.warnings).toEqual(['f0', 'f1', 'f2', 'f3'].map((k) => `"${k}" is shown as "other": the overrides took its colour.`));
   });
 
+  // A typed spec skips the schema, which allows 12 overrides at most: the resolver still has to cope with 13.
+  it('warns that an override cannot be kept when a spec that bypassed the schema has more overrides than categories', () => {
+    const rows = Array.from({ length: 13 }, (_, i) => ({ k: `v${String(i).padStart(2, '0')}` }));
+    const overrides = Object.fromEntries(rows.map(({ k }) => [k, '#ff0000']));
+    expect(Object.keys(overrides)).toHaveLength(maxCategories + 1);
+    const data = resolved({ type: 'categorized', column: 'k', overrides }, rows);
+    if (data.type !== 'categorized') throw new Error('type');
+    expect(data.items).toHaveLength(maxCategories);
+    expect(data.other).toEqual({ color: styleConfig.otherColor, count: 1 });
+    expect(data.warnings).toEqual([`Override for "v12" ignored: at most ${maxCategories} categories get a colour.`]);
+  });
+
   it('treats a value named like an object property as a plain value', () => {
     const data = resolved({ type: 'categorized', column: 'k' }, [{ k: 'constructor' }, { k: '__proto__' }]);
     if (data.type !== 'categorized') throw new Error('type');
@@ -192,7 +205,7 @@ describe('resolveStyle: graduated', () => {
       max: 100,
       nullCount: 0,
       nullColor: styleConfig.noDataColor,
-      common: { ...defaultCommon, size: family === 'line' ? styleConfig.defaults.size.line : defaultCommon.size }
+      common: defaultCommonFor(family)
     });
   });
 
@@ -275,7 +288,7 @@ describe('resolveStyle: proportional', () => {
       max: 100,
       minRadius: styleConfig.defaults.minRadius,
       maxRadius: styleConfig.defaults.maxRadius,
-      common: defaultCommon
+      common: defaultCommonFor('point')
     });
   });
 
@@ -338,4 +351,242 @@ describe('resolveStyle: errors', () => {
   it.each(styles)('refuses a layer with no features ($type)', (style) => {
     expect(failed(style, [])).toEqual({ code: 'INVALID_STYLE', message: 'The layer has no features.' });
   });
+});
+
+describe('checkLabel', () => {
+  const columns = [{ name: 'name', type: 'string' as const }, { name: 'n', type: 'number' as const }];
+
+  it('accepts a label on a column the layer has', () => {
+    expect(checkLabel({ column: 'name' }, columns)).toEqual({ ok: true, data: { column: 'name' } });
+  });
+
+  it('answers UNKNOWN_COLUMN with the columns the layer has', () => {
+    const result = checkLabel({ column: 'nope' }, columns);
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'UNKNOWN_COLUMN', message: 'The layer has no column "nope".', hint: 'Columns: name, n.' }
+    });
+  });
+});
+
+function layerOf(style: StyleSpec, rows: JsonRow[], family: GeometryFamily, extra: { visible?: boolean; label?: { column: string; size?: number; color?: string; haloColor?: string; haloWidth?: number; minZoom?: number } | null } = {}) {
+  return { id: 'L3', geometryType: family, visible: extra.visible ?? true, label: extra.label ?? null, resolved: resolved(style, rows, family) };
+}
+
+function only<T extends MapLibreLayerSpec['type']>(specs: MapLibreLayerSpec[], type: T) {
+  const found = specs.filter((spec): spec is Extract<MapLibreLayerSpec, { type: T }> => spec.type === type);
+  expect(found).toHaveLength(1);
+  return found[0];
+}
+
+describe('toMapLibreLayers', () => {
+  const single: StyleSpec = { type: 'single', color: '#112233', opacity: 0.4, strokeColor: '#aabbcc', strokeWidth: 3, size: 8 };
+
+  it('draws a polygon as a fill and then an outline, with the common values', () => {
+    const specs = toMapLibreLayers(layerOf(single, [{ a: 1 }], 'polygon'));
+    expect(specs.map((s) => [s.id, s.type, s.source])).toEqual([['L3-fill', 'fill', 'L3'], ['L3-outline', 'line', 'L3']]);
+    expect(specs[0].paint).toEqual({ 'fill-color': '#112233', 'fill-opacity': 0.4 });
+    expect(specs[1].paint).toEqual({ 'line-color': '#aabbcc', 'line-width': 3 });
+  });
+
+  it('draws a line with the size as its width', () => {
+    const [spec] = toMapLibreLayers(layerOf(single, [{ a: 1 }], 'line'));
+    expect(spec).toMatchObject({ id: 'L3-line', type: 'line', paint: { 'line-color': '#112233', 'line-width': 8 } });
+  });
+
+  it('draws a point as a circle with the size as its radius and the stroke from the common values', () => {
+    const [spec] = toMapLibreLayers(layerOf(single, [{ a: 1 }], 'point'));
+    expect(spec).toMatchObject({
+      id: 'L3-circle',
+      type: 'circle',
+      paint: { 'circle-color': '#112233', 'circle-radius': 8, 'circle-opacity': 0.4, 'circle-stroke-color': '#aabbcc', 'circle-stroke-width': 3 }
+    });
+  });
+
+  it('colours categories by the text of the value, the rest as other, and NULL as no data', () => {
+    const rows = [{ k: 'a' }, { k: 'a' }, { k: 'b' }, { k: null }];
+    const layer = layerOf({ type: 'categorized', column: 'k' }, rows, 'point');
+    const { paint } = only(toMapLibreLayers(layer), 'circle');
+    const [a, b] = qualitativeColors('set2');
+    expect(paint?.['circle-color']).toEqual([
+      'case',
+      ['==', ['get', 'k'], null],
+      styleConfig.noDataColor,
+      ['match', ['to-string', ['get', 'k']], 'a', a, 'b', b, a]
+    ]);
+  });
+
+  it('falls back to the other colour for a value without a colour of its own', () => {
+    const rows = Array.from({ length: maxCategories + 3 }, (_, i) => ({ k: `v${String(i).padStart(2, '0')}` }));
+    const { paint } = only(toMapLibreLayers(layerOf({ type: 'categorized', column: 'k', palette: 'tableau10' }, rows, 'point')), 'circle');
+    expect(JSON.stringify(paint?.['circle-color'])).toMatch(new RegExp(`,"${styleConfig.otherColor}"\\]\\]$`));
+  });
+
+  it('uses the no-data colour alone when every value is NULL', () => {
+    const layer = layerOf({ type: 'categorized', column: 'k' }, [{ k: null }, { k: null }], 'point');
+    expect(only(toMapLibreLayers(layer), 'circle').paint?.['circle-color']).toBe(styleConfig.noDataColor);
+  });
+
+  it('steps graduated colours over the number, and NULL or a non-number as no data', () => {
+    const layer = layerOf({ type: 'graduated', column: 'price', method: 'equal', classes: 3, palette: 'blues' }, prices, 'polygon');
+    const { paint } = only(toMapLibreLayers(layer), 'fill');
+    const { resolved: r } = layer;
+    if (r.type !== 'graduated') throw new Error('type');
+    expect(r.breaks).toHaveLength(2);
+    expect(paint?.['fill-color']).toEqual([
+      'case',
+      ['==', ['typeof', ['get', 'price']], 'number'],
+      ['step', ['to-number', ['get', 'price']], r.colors[0], r.breaks[0], r.colors[1], r.breaks[1], r.colors[2]],
+      styleConfig.noDataColor
+    ]);
+  });
+
+  it('sizes proportional radii by the square root of the value; features without a number are small and in the no-data colour', () => {
+    const rows = [{ v: 4 }, { v: 16 }, { v: 36 }];
+    const layer = layerOf({ type: 'proportional', column: 'v', color: '#336699', minRadius: 2, maxRadius: 12 }, rows, 'point');
+    const { paint } = only(toMapLibreLayers(layer), 'circle');
+    const isNumber = ['==', ['typeof', ['get', 'v']], 'number'];
+    expect(paint?.['circle-color']).toEqual(['case', isNumber, '#336699', styleConfig.noDataColor]);
+    expect(paint?.['circle-radius']).toEqual([
+      'case',
+      isNumber,
+      ['interpolate', ['linear'], ['sqrt', ['max', ['to-number', ['get', 'v']], 0]], 2, 2, 6, 12],
+      styleConfig.noDataRadius
+    ]);
+  });
+
+  it('uses a constant radius for numbers when all values are equal', () => {
+    const layer = layerOf({ type: 'proportional', column: 'v', color: '#336699', minRadius: 2, maxRadius: 12 }, [{ v: 5 }, { v: 5 }], 'point');
+    expect(only(toMapLibreLayers(layer), 'circle').paint?.['circle-radius']).toEqual([
+      'case',
+      ['==', ['typeof', ['get', 'v']], 'number'],
+      7,
+      styleConfig.noDataRadius
+    ]);
+  });
+
+  it('colours a graduated style with one distinct value by its one colour, with no step', () => {
+    const layer = layerOf({ type: 'graduated', column: 'v', method: 'quantile', classes: 5 }, [{ v: 5 }, { v: 5 }], 'polygon');
+    if (layer.resolved.type !== 'graduated') throw new Error('type');
+    expect(layer.resolved.breaks).toEqual([]);
+    expect(only(toMapLibreLayers(layer), 'fill').paint?.['fill-color']).toEqual([
+      'case',
+      ['==', ['typeof', ['get', 'v']], 'number'],
+      layer.resolved.colors[0],
+      styleConfig.noDataColor
+    ]);
+  });
+
+  it('puts a point label below the circle, with the defaults filled in', () => {
+    const specs = toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'point', { label: { column: 'name' } }));
+    expect(specs.map((s) => s.id)).toEqual(['L3-circle', 'L3-label']);
+    expect(specs[1]).toEqual({
+      id: 'L3-label',
+      type: 'symbol',
+      source: 'L3',
+      minzoom: styleConfig.labelDefaults.minZoom,
+      layout: {
+        'text-anchor': 'top',
+        'text-offset': [0, mapConfig.label.pointOffsetEm],
+        visibility: 'visible',
+        'text-field': ['to-string', ['get', 'name']],
+        'text-font': [...mapConfig.label.fontStack],
+        'text-size': styleConfig.labelDefaults.size
+      },
+      paint: {
+        'text-color': styleConfig.labelDefaults.color,
+        'text-halo-color': styleConfig.labelDefaults.haloColor,
+        'text-halo-width': styleConfig.labelDefaults.haloWidth
+      }
+    });
+  });
+
+  it('takes the values of the label spec, and places line labels along the line and polygon labels by default', () => {
+    const label = { column: 'name', size: 20, color: '#010203', haloColor: '#040506', haloWidth: 3, minZoom: 9 };
+    const line = only(toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'line', { label })), 'symbol');
+    expect(line.minzoom).toBe(9);
+    expect(line.layout).toMatchObject({ 'symbol-placement': 'line', 'text-size': 20 });
+    expect(line.paint).toEqual({ 'text-color': '#010203', 'text-halo-color': '#040506', 'text-halo-width': 3 });
+    const polygon = only(toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'polygon', { label })), 'symbol');
+    expect(polygon.layout).not.toHaveProperty('symbol-placement');
+    expect(polygon.layout).not.toHaveProperty('text-anchor');
+  });
+
+  it('hides the label with its layer', () => {
+    const specs = toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'polygon', { visible: false, label: { column: 'name' } }));
+    expect(specs).toHaveLength(3);
+    for (const spec of specs) expect(spec.layout?.visibility).toBe('none');
+  });
+
+  it('draws no label without a label spec', () => {
+    expect(toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'point')).some((s) => s.type === 'symbol')).toBe(false);
+  });
+});
+
+describe('summarizeResolved', () => {
+  it('names the colour of a single style', () => {
+    expect(summarizeResolved(resolved({ type: 'single', color: '#112233' }, [{ a: 1 }]))).toEqual({ type: 'single', color: '#112233' });
+  });
+
+  it('lists the categories with colour and count, the rest as other, and the warnings', () => {
+    const rows = [{ kind: 'b' }, { kind: 'a' }, { kind: 'b' }, { kind: null }];
+    const summary = summarizeResolved(resolved({ type: 'categorized', column: 'kind', overrides: { zzz: '#00ff00' } }, rows));
+    expect(summary).toMatchObject({ type: 'categorized', column: 'kind', nullCount: 1, other: null });
+    expect(summary.type === 'categorized' && summary.categories).toEqual([{ value: 'b', color: qualitativeColors('set2')[0], count: 2 }, { value: 'a', color: qualitativeColors('set2')[1], count: 1 }]);
+    expect(summary.type === 'categorized' && summary.warnings).toEqual(['Override for "zzz" ignored: no feature has that value in "kind".']);
+  });
+
+  it('gives the breaks, colours and range of a graduated style', () => {
+    const summary = summarizeResolved(resolved({ type: 'graduated', column: 'price', method: 'equal', classes: 2 }, prices));
+    expect(summary).toMatchObject({ type: 'graduated', column: 'price', breaks: [55], min: 10, max: 100, nullCount: 0 });
+    expect(summary.type === 'graduated' && summary.colors).toHaveLength(2);
+  });
+
+  it('gives the range and radii of a proportional style', () => {
+    const summary = summarizeResolved(resolved({ type: 'proportional', column: 'price', color: '#336699' }, prices));
+    expect(summary).toEqual({
+      type: 'proportional',
+      column: 'price',
+      color: '#336699',
+      min: 10,
+      max: 100,
+      minRadius: styleConfig.defaults.minRadius,
+      maxRadius: styleConfig.defaults.maxRadius
+    });
+  });
+});
+
+// What MapLibre itself accepts: every layer the compiler makes is validated with the style spec (the map would refuse an invalid one).
+describe('toMapLibreLayers produces valid MapLibre layers', () => {
+  const numbers = [{ v: 1, name: 'a' }, { v: 5, name: 'b' }, { v: 100, name: 'c' }, { v: null, name: 'd' }, { v: 'x', name: 'e' }];
+  const cases: { name: string; style: StyleSpec; rows: JsonRow[] }[] = [
+    { name: 'single', style: { type: 'single', color: '#112233' }, rows: numbers },
+    { name: 'categorized', style: { type: 'categorized', column: 'v' }, rows: numbers },
+    { name: 'categorized with one category', style: { type: 'categorized', column: 'v' }, rows: [{ v: 'a' }] },
+    { name: 'categorized, all NULL', style: { type: 'categorized', column: 'v' }, rows: [{ v: null }] },
+    { name: 'categorized, more categories than colours', style: { type: 'categorized', column: 'v', palette: 'set2' }, rows: Array.from({ length: 20 }, (_, i) => ({ v: `c${i}` })) },
+    { name: 'graduated', style: { type: 'graduated', column: 'v', method: 'quantile', classes: 3 }, rows: numbers },
+    { name: 'graduated, one distinct value', style: { type: 'graduated', column: 'v', method: 'quantile', classes: 5 }, rows: [{ v: 5 }, { v: 5 }] },
+    { name: 'graduated, one feature', style: { type: 'graduated', column: 'v', method: 'equal', classes: 5 }, rows: [{ v: 7 }] },
+    { name: 'graduated, manual', style: { type: 'graduated', column: 'v', method: 'manual', breaks: [2, 50] }, rows: numbers },
+    { name: 'proportional', style: { type: 'proportional', column: 'v', color: '#123456' }, rows: numbers },
+    { name: 'proportional, equal values', style: { type: 'proportional', column: 'v', color: '#123456' }, rows: [{ v: 4 }, { v: 4 }] },
+    { name: 'proportional, negative values', style: { type: 'proportional', column: 'v', color: '#123456' }, rows: [{ v: -4 }, { v: 9 }] }
+  ];
+  const families: GeometryFamily[] = ['point', 'line', 'polygon'];
+
+  it.each(cases.flatMap((item) => families.map((family) => [item.name, family, item] as const)))(
+    '%s on %s, with a label',
+    (_name, family, { style, rows }) => {
+      if (style.type === 'proportional' && family !== 'point') return;
+      const layer = layerOf(style, rows, family, { label: { column: 'name' } });
+      const document: StyleSpecification = {
+        version: 8,
+        glyphs: 'https://example.test/{fontstack}/{range}.pbf',
+        sources: { L3: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } },
+        layers: toMapLibreLayers(layer)
+      };
+      expect(validateStyleMin(document).map(({ message }) => message)).toEqual([]);
+    }
+  );
 });

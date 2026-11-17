@@ -8,6 +8,7 @@
   import { runEngine } from '$lib/duckdb/engineEffect.svelte';
   import { isRetryableMessage } from '$lib/duckdb/errors';
   import DevSqlBox from './DevSqlBox.svelte';
+  import DevStyleBox from './DevStyleBox.svelte';
   import LayerList from './LayerList.svelte';
   import MapView from './MapView.svelte';
 
@@ -61,6 +62,7 @@
     >
       {#if import.meta.env.DEV}
         <DevSqlBox ready={engineStatus.state === 'ready'} />
+        <DevStyleBox />
       {/if}
       <LayerList />
     </aside>

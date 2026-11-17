@@ -106,7 +106,8 @@ export const styleConfig = {
   /** The zoom levels of the basemap. */
   zoom: { min: 0, max: 22 },
   defaults: {
-    opacity: 0.7,
+    /** By geometry: a polygon is lighter, so that the basemap stays readable under it. */
+    opacity: { polygon: 0.45, line: 0.7, point: 0.7 },
     strokeColor: '#ffffff',
     strokeWidth: 1,
     /** Point radius and line width (pixels); a polygon has no `size`, its outline is `strokeWidth`. */
@@ -122,7 +123,11 @@ export const styleConfig = {
   /** Colour of the features without a value in the styled column; a light grey, apart from `otherColor`. */
   noDataColor: '#d9d9d9',
   /** Most column names listed in the hint of an unknown-column error. */
-  maxHintColumns: 20
+  maxHintColumns: 20,
+  /** What a label takes when the model leaves the value out. */
+  /** Radius (pixels) of the proportional symbols of features without a number: drawn small, in `noDataColor`. */
+  noDataRadius: 2,
+  labelDefaults: { size: 12, color: '#222222', haloColor: '#ffffff', haloWidth: 1.5, minZoom: 0 }
 } as const;
 
 const initialCenter: [number, number] = [137.0, 38.0];
@@ -131,19 +136,43 @@ export const mapConfig = {
   basemapStyleUrl: 'https://tiles.openfreemap.org/styles/positron',
   /** Whole of Japan. */
   initialView: { center: initialCenter, zoom: 4 },
-  /** Provisional single colours of a layer until Phase 3 styles it; cycled by the layer's sequence number. */
+  /** The single colours of the layers added without a style; cycled by the layer's sequence number. */
   defaultLayerColors: ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628'],
   /** Padding (pixels) around a layer's bounding box when the map is fitted to it. */
   fitPaddingPx: 48,
   fitDurationMs: 600,
   /** A layer of one point (or a tiny extent) is not zoomed in beyond this. */
   fitMaxZoom: 14,
-  /** Provisional layer paint. */
-  paint: {
-    fillOpacity: 0.5,
-    lineWidth: 2,
-    outlineWidth: 1,
-    circleRadius: 4,
-    circleOpacity: 0.8
-  }
+  label: {
+    /** A font stack the basemap's glyph server has (the fonts of `basemapStyleUrl`'s own labels, read from its style JSON). */
+    fontStack: ['Noto Sans Regular'],
+    /** Offset (ems) of a point's label below the symbol, which it is anchored to by its top. */
+    pointOffsetEm: 0.8
+  },
+  /**
+   * MapLibre draws the ideographs (Japanese, Chinese, Korean) with this CSS font list instead of loading glyphs for
+   * them: the first font of the list that the system has is used, so it names the ones of macOS, Windows and Linux.
+   */
+  localIdeographFontFamily: '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Noto Sans JP", sans-serif',
+  /*
+   * The layer summary for the model (`src/lib/map/summary.ts`) goes into every turn, so each part is capped and the whole
+   * is kept within `summaryMaxBytes` by shrinking it in steps.
+   */
+  /** Layers beyond this many are listed by id and name only. */
+  summaryMaxLayers: 12,
+  /** What the summary keeps of a layer's SQL: the text is cut to this many characters. */
+  summarySqlChars: 120,
+  /** At most this many columns of a layer are listed (`columnCount` tells how many it has). */
+  summaryMaxColumns: 12,
+  /** A column whose name is longer is left out of the list (a cut name could not be used): it is only counted. */
+  summaryMaxColumnNameChars: 40,
+  /** Layer names and category values (and override values) are cut to this many characters, ending in "…". */
+  summaryMaxStringChars: 24,
+  /** At most this many warnings of a layer's style are listed, each cut to `summaryMaxWarningChars`. */
+  summaryMaxWarnings: 2,
+  summaryMaxWarningChars: 160,
+  /** The step that shrinks an oversized summary lists only this many categories of a layer (`categoryCount` tells how many). */
+  summaryShrunkCategories: 6,
+  /** The summary (JSON, UTF-8 bytes) is kept below this: when it is over, it is shrunk step by step. */
+  summaryMaxBytes: 16 * 1024
 } as const;

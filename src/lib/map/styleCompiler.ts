@@ -1,8 +1,16 @@
-import { dataConfig, styleConfig } from '../../../shared/config';
-import type { GeometryFamily, HexColor, StyleSpec } from '../../../shared/mapSpec';
+import type {
+  CircleLayerSpecification,
+  ExpressionSpecification,
+  FillLayerSpecification,
+  LineLayerSpecification,
+  SymbolLayerSpecification
+} from 'maplibre-gl';
+import { dataConfig, mapConfig, styleConfig } from '../../../shared/config';
+import type { AppliedStyle, GeometryFamily, HexColor, LabelSpec, StyleSpec } from '../../../shared/mapSpec';
 import { toolError, type ClientToolResult } from '../../../shared/toolProtocol';
-import type { GeoJsonFeature, GeoJsonFeatureCollection } from '../duckdb/queryTypes';
+import type { ColumnInfo, GeoJsonFeature, GeoJsonFeatureCollection } from '../duckdb/queryTypes';
 import { computeBreaks } from './classify';
+import { mapLayerIds } from './drawOrder';
 import { qualitativeColors, sequentialColors } from './palettes';
 
 /**
@@ -61,7 +69,7 @@ const { defaults } = styleConfig;
 
 function resolveCommon(style: StyleSpec, geometryType: GeometryFamily): ResolvedCommon {
   return {
-    opacity: style.opacity ?? defaults.opacity,
+    opacity: style.opacity ?? defaults.opacity[geometryType],
     strokeColor: style.strokeColor ?? defaults.strokeColor,
     strokeWidth: style.strokeWidth ?? defaults.strokeWidth,
     size: style.size ?? (geometryType === 'line' ? defaults.size.line : defaults.size.point)
@@ -70,10 +78,18 @@ function resolveCommon(style: StyleSpec, geometryType: GeometryFamily): Resolved
 
 const noFeatures = () => toolError('INVALID_STYLE', 'The layer has no features.');
 
-function unknownColumn(column: string, features: readonly GeoJsonFeature[]): ClientToolResult<never> {
-  const available = new Set(features.flatMap(({ properties }) => Object.keys(properties)));
-  const listed = [...available].slice(0, styleConfig.maxHintColumns);
+function unknownColumn(column: string, available: Iterable<string>): ClientToolResult<never> {
+  const listed = [...new Set(available)].slice(0, styleConfig.maxHintColumns);
   return toolError('UNKNOWN_COLUMN', `The layer has no column "${column}".`, `Columns: ${listed.join(', ')}.`);
+}
+
+/** A label can only name a column the layer has. */
+export function checkLabel(label: LabelSpec, columns: readonly ColumnInfo[]): ClientToolResult<LabelSpec> {
+  if (columns.some(({ name }) => name === label.column)) return { ok: true, data: label };
+  return unknownColumn(
+    label.column,
+    columns.map(({ name }) => name)
+  );
 }
 
 /** The finite numbers in a column; the rest (NULL, text, ...) counts as `nullCount`. */
@@ -130,6 +146,7 @@ function resolveCategorized(
     ...Object.keys(overrides)
       .filter((value) => !counts.has(value))
       .map((value) => `Override for "${value}" ignored: no feature has that value in "${style.column}".`),
+    // Cannot happen for a spec that passed the schema (at most maxCategories overrides); this defends against one that did not.
     ...folded
       .filter(([value]) => hasOverride(value))
       .map(([value]) => `Override for "${value}" ignored: at most ${maxCategories} categories get a colour.`),
@@ -159,7 +176,7 @@ export function resolveStyle(
   }
   const list = features.features;
   if (list.length === 0) return noFeatures();
-  if (!list.some(({ properties }) => Object.hasOwn(properties, style.column))) return unknownColumn(style.column, list);
+  if (!list.some(({ properties }) => Object.hasOwn(properties, style.column))) return unknownColumn(style.column, list.flatMap(({ properties }) => Object.keys(properties)));
 
   if (style.type === 'categorized') return { ok: true, data: resolveCategorized(style, list, common) };
 
@@ -184,4 +201,189 @@ export function resolveStyle(
       : computeBreaks(values, style.method, style.classes ?? dataConfig.classification.defaultClasses);
   const colors = sequentialColors(style.palette ?? defaults.graduatedPalette, breaks.length + 1, style.reverse);
   return { ok: true, data: { type: 'graduated', column: style.column, breaks, colors, min, max, nullCount, nullColor: styleConfig.noDataColor, common } };
+}
+
+export type MapLibreLayerSpec =
+  | FillLayerSpecification
+  | LineLayerSpecification
+  | CircleLayerSpecification
+  | SymbolLayerSpecification;
+
+/** What the map layers need of a layer: the resolved style and label, and whether it shows. */
+export type StyledLayer = {
+  id: string;
+  geometryType: GeometryFamily;
+  visible: boolean;
+  label: LabelSpec | null;
+  resolved: ResolvedStyle;
+};
+
+const property = (column: string): ExpressionSpecification => ['get', column];
+
+const isNumber = (column: string): ExpressionSpecification => ['==', ['typeof', property(column)], 'number'];
+
+/** The colour of each feature: a constant, or an expression of the styled column (NULL and non-numbers in the no-data colour). */
+function colorExpression(resolved: ResolvedStyle): HexColor | ExpressionSpecification {
+  if (resolved.type === 'single') return resolved.color;
+  // Features without a number (NULL, text) are not part of the scale: the no-data colour, and a small fixed radius.
+  if (resolved.type === 'proportional') return ['case', isNumber(resolved.column), resolved.color, styleConfig.noDataColor];
+  if (resolved.type === 'categorized') {
+    const fallback = resolved.other?.color ?? resolved.items[0]?.color ?? resolved.nullColor;
+    const [first, ...rest] = resolved.items;
+    // `match` needs at least one label.
+    if (!first) return fallback;
+    const match: ExpressionSpecification = [
+      'match',
+      ['to-string', property(resolved.column)],
+      first.value,
+      first.color,
+      ...rest.flatMap((item) => [item.value, item.color]),
+      fallback
+    ];
+    return ['case', ['==', property(resolved.column), null], resolved.nullColor, match];
+  }
+  const [firstColor, ...restColors] = resolved.colors;
+  // One distinct value gives no break: a `step` needs at least one stop, so the one colour stands alone.
+  const step: HexColor | ExpressionSpecification =
+    restColors.length === 0
+      ? firstColor
+      : ['step', ['to-number', property(resolved.column)], firstColor, ...restColors.flatMap((color, k) => [resolved.breaks[k], color])];
+  return ['case', isNumber(resolved.column), step, resolved.nullColor];
+}
+
+/** The symbol radius: the area follows the value, so the radius follows its square root (between `minRadius` and `maxRadius`). */
+function radiusExpression(resolved: ResolvedStyle): number | ExpressionSpecification {
+  if (resolved.type !== 'proportional') return resolved.common.size;
+  const { column, min, max, minRadius, maxRadius } = resolved;
+  const root = (n: number) => Math.sqrt(Math.max(n, 0));
+  // A single value (or none above zero) has no range to interpolate over.
+  const sized: number | ExpressionSpecification =
+    root(min) === root(max)
+      ? (minRadius + maxRadius) / 2
+      : [
+          'interpolate',
+          ['linear'],
+          ['sqrt', ['max', ['to-number', property(column)], 0]],
+          root(min),
+          minRadius,
+          root(max),
+          maxRadius
+        ];
+  return ['case', isNumber(column), sized, styleConfig.noDataRadius];
+}
+
+function labelLayer(layer: StyledLayer, label: LabelSpec): SymbolLayerSpecification {
+  const ids = mapLayerIds(layer.id);
+  const defaults = styleConfig.labelDefaults;
+  const placement: Record<GeometryFamily, SymbolLayerSpecification['layout']> = {
+    point: { 'text-anchor': 'top', 'text-offset': [0, mapConfig.label.pointOffsetEm] },
+    line: { 'symbol-placement': 'line' },
+    polygon: {}
+  };
+  return {
+    id: ids.label,
+    type: 'symbol',
+    source: ids.source,
+    minzoom: label.minZoom ?? defaults.minZoom,
+    layout: {
+      ...placement[layer.geometryType],
+      visibility: layer.visible ? 'visible' : 'none',
+      'text-field': ['to-string', property(label.column)],
+      'text-font': [...mapConfig.label.fontStack],
+      'text-size': label.size ?? defaults.size
+    },
+    paint: {
+      'text-color': label.color ?? defaults.color,
+      'text-halo-color': label.haloColor ?? defaults.haloColor,
+      'text-halo-width': label.haloWidth ?? defaults.haloWidth
+    }
+  };
+}
+
+/**
+ * The MapLibre layers of a styled layer, bottom to top: the geometry (a polygon's fill, then its outline; a line; a
+ * circle), then the label when there is one. Plain data: the map view hands each one to the map.
+ */
+export function toMapLibreLayers(layer: StyledLayer): MapLibreLayerSpec[] {
+  const ids = mapLayerIds(layer.id);
+  const { resolved } = layer;
+  const { common } = resolved;
+  const layout = { visibility: layer.visible ? ('visible' as const) : ('none' as const) };
+  const color = colorExpression(resolved);
+
+  const geometry: Record<GeometryFamily, MapLibreLayerSpec[]> = {
+    polygon: [
+      { id: ids.fill, type: 'fill', source: ids.source, layout, paint: { 'fill-color': color, 'fill-opacity': common.opacity } },
+      {
+        id: ids.outline,
+        type: 'line',
+        source: ids.source,
+        layout,
+        paint: { 'line-color': common.strokeColor, 'line-width': common.strokeWidth }
+      }
+    ],
+    line: [
+      {
+        id: ids.line,
+        type: 'line',
+        source: ids.source,
+        layout,
+        paint: { 'line-color': color, 'line-width': common.size, 'line-opacity': common.opacity }
+      }
+    ],
+    point: [
+      {
+        id: ids.circle,
+        type: 'circle',
+        source: ids.source,
+        layout,
+        paint: {
+          'circle-color': color,
+          'circle-radius': radiusExpression(resolved),
+          'circle-opacity': common.opacity,
+          'circle-stroke-color': common.strokeColor,
+          'circle-stroke-width': common.strokeWidth
+        }
+      }
+    ]
+  };
+  return layer.label ? [...geometry[layer.geometryType], labelLayer(layer, layer.label)] : geometry[layer.geometryType];
+}
+
+/** The short account of a resolved style that the model is told: the breaks and colours, the categories, the range. */
+export function summarizeResolved(resolved: ResolvedStyle): AppliedStyle {
+  switch (resolved.type) {
+    case 'single':
+      return { type: 'single', color: resolved.color };
+    case 'categorized':
+      return {
+        type: 'categorized',
+        column: resolved.column,
+        categories: resolved.items.map(({ value, color, count }) => ({ value, color, count })),
+        categoryCount: resolved.items.length,
+        other: resolved.other,
+        nullCount: resolved.nullCount,
+        warnings: resolved.warnings
+      };
+    case 'graduated':
+      return {
+        type: 'graduated',
+        column: resolved.column,
+        breaks: resolved.breaks,
+        colors: resolved.colors,
+        min: resolved.min,
+        max: resolved.max,
+        nullCount: resolved.nullCount
+      };
+    case 'proportional':
+      return {
+        type: 'proportional',
+        column: resolved.column,
+        color: resolved.color,
+        min: resolved.min,
+        max: resolved.max,
+        minRadius: resolved.minRadius,
+        maxRadius: resolved.maxRadius
+      };
+  }
 }

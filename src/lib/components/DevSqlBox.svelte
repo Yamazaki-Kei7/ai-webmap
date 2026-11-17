@@ -25,8 +25,8 @@
       const result = await queryLayer(text);
       // A user who signed out (or another one who signed in) meanwhile gets nothing of it.
       if (session !== currentSession()) return;
-      if (result.ok) addLayer({ name: layerName(text), sql: text }, result.data);
-      else errorText = `${result.error.code}: ${result.error.message}`;
+      const added = result.ok ? addLayer({ name: layerName(text), sql: text }, result.data) : result;
+      if (!added.ok) errorText = `${added.error.code}: ${added.error.message}`;
     } finally {
       running = false;
     }

@@ -56,8 +56,10 @@ describe('config invariants', () => {
 
   it('keeps the style defaults inside their bounds', () => {
     const { defaults, opacity } = styleConfig;
-    expect(defaults.opacity).toBeGreaterThanOrEqual(opacity.min);
-    expect(defaults.opacity).toBeLessThanOrEqual(opacity.max);
+    for (const value of Object.values(defaults.opacity)) {
+      expect(value).toBeGreaterThanOrEqual(opacity.min);
+      expect(value).toBeLessThanOrEqual(opacity.max);
+    }
     expect(defaults.strokeWidth).toBeLessThanOrEqual(styleConfig.maxStrokeWidth);
     expect(defaults.size.point).toBeLessThanOrEqual(styleConfig.maxSize);
     expect(defaults.size.line).toBeLessThanOrEqual(styleConfig.maxSize);
@@ -88,5 +90,31 @@ describe('config invariants', () => {
     expect(colors.length).toBeGreaterThan(0);
     for (const color of colors) expect(color).toMatch(/^#[0-9a-f]{6}$/i);
     expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it('keeps the model layer summary within one tool result, and gives its caps positive values', () => {
+    expect(mapConfig.summaryMaxBytes).toBeLessThanOrEqual(resultConfig.maxToolResultBytes);
+    const caps = [
+      mapConfig.summaryMaxLayers,
+      mapConfig.summarySqlChars,
+      mapConfig.summaryMaxColumns,
+      mapConfig.summaryMaxColumnNameChars,
+      mapConfig.summaryMaxStringChars,
+      mapConfig.summaryMaxWarnings,
+      mapConfig.summaryMaxWarningChars,
+      mapConfig.summaryShrunkCategories
+    ];
+    for (const cap of caps) expect(cap).toBeGreaterThan(0);
+  });
+
+  it('draws a feature without a number smaller than the smallest proportional symbol', () => {
+    expect(styleConfig.noDataRadius).toBeLessThan(styleConfig.defaults.minRadius);
+  });
+
+  it('gives labels hex colours and a font stack', () => {
+    expect(styleConfig.labelDefaults.color).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(styleConfig.labelDefaults.haloColor).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(mapConfig.label.fontStack.length).toBeGreaterThan(0);
+    expect(mapConfig.localIdeographFontFamily).toContain('sans-serif');
   });
 });
