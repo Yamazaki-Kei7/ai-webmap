@@ -54,7 +54,7 @@ export const promptExamples: readonly PromptExample[] = [
           name: '東京都の駅の乗降客数',
           sql: "SELECT station_name, sum(passengers_per_day) AS passengers_per_day, any_value(geom) AS geom FROM stations WHERE pref_name = '東京都' GROUP BY pref_name, station_name",
           style: { type: 'proportional', column: 'passengers_per_day', color: '#e41a1c', minRadius: 3, maxRadius: 30, opacity: 0.6 },
-          label: { column: 'station_name', size: 11, minZoom: 11 }
+          label: { column: 'station_name', size: 11 }
         }
       }
     ]
@@ -94,6 +94,16 @@ export const promptExamples: readonly PromptExample[] = [
       {
         tool: 'setLayerStyle',
         input: { layerId: 'L2', style: { type: 'graduated', column: 'school_count', method: 'equal', classes: 4, palette: 'blues' } }
+      }
+    ]
+  },
+  {
+    title: '色を変えると名前が合わなくなるときは、name も付ける',
+    request: '（地図に L3「赤い駅」がある）L3 を青にして',
+    calls: [
+      {
+        tool: 'setLayerStyle',
+        input: { layerId: 'L3', style: { type: 'single', color: '#377eb8' }, name: '駅' }
       }
     ]
   },

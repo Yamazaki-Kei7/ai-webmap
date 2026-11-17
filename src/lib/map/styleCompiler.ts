@@ -276,6 +276,11 @@ function radiusExpression(resolved: ResolvedStyle): number | ExpressionSpecifica
   return ['case', isNumber(column), sized, styleConfig.noDataRadius];
 }
 
+/** Whether the layer's labels are drawn from the derived source of one point per feature (polygons), not from its own features. */
+export function usesLabelPoints(layer: Pick<StyledLayer, 'geometryType' | 'label' | 'status'>): boolean {
+  return layer.geometryType === 'polygon' && layer.label !== null && layer.status !== 'error';
+}
+
 function labelLayer(layer: StyledLayer, label: LabelSpec): SymbolLayerSpecification {
   const ids = mapLayerIds(layer.id);
   const defaults = styleConfig.labelDefaults;
@@ -287,7 +292,7 @@ function labelLayer(layer: StyledLayer, label: LabelSpec): SymbolLayerSpecificat
   return {
     id: ids.label,
     type: 'symbol',
-    source: ids.source,
+    source: usesLabelPoints(layer) ? ids.labelSource : ids.source,
     minzoom: label.minZoom ?? defaults.minZoom,
     layout: {
       ...placement[layer.geometryType],

@@ -72,8 +72,10 @@ const runQueryInputSchema = z.strictObject({
   sql: sqlSchema.describe('One SELECT or WITH statement over the views. Returns the values as rows.')
 });
 
+const layerNameSchema = z.string().min(1).max(toolConfig.maxLayerNameChars);
+
 const addLayerInputSchema = z.strictObject({
-  name: z.string().min(1).max(toolConfig.maxLayerNameChars).describe('Short layer name for the layer list.'),
+  name: layerNameSchema.describe('Short layer name for the layer list.'),
   sql: sqlSchema.describe('One SELECT or WITH statement with exactly one geometry column named geom.'),
   style: styleSpecSchema.optional().describe('How to draw the layer. Left out: a single colour (or the replaced layer\'s style).'),
   label: labelSpecSchema.optional().describe('Labels from a column. Left out: no labels.'),
@@ -83,7 +85,8 @@ const addLayerInputSchema = z.strictObject({
 
 const setLayerStyleInputSchema = z.strictObject({
   layerId: layerIdSchema,
-  style: styleSpecSchema.describe('The new style. It replaces the old one.')
+  style: styleSpecSchema.describe('The new style. It replaces the old one.'),
+  name: layerNameSchema.optional().describe('A new layer name, if the old name is now wrong. Left out: it stays.')
 });
 
 const setLayerLabelInputSchema = z.strictObject({
@@ -110,7 +113,7 @@ export const toolDescriptions = {
   runQuery:
     `Runs a SELECT query and returns up to ${queryConfig.maxRows} rows. Use it to look up values or check a result, not to draw.`,
   addLayer: 'Draws the result of a query on the map as a new layer. Use it to show data on the map.',
-  setLayerStyle: 'Changes how an existing layer is coloured and sized. Use it for colours, classes and symbol sizes.',
+  setLayerStyle: 'Changes how an existing layer is coloured and sized, and renames it when the old name no longer fits. Use it for colours, classes and symbol sizes.',
   setLayerLabel: 'Shows or hides the labels of an existing layer. Use it to name the features on the map.',
   removeLayer: 'Removes a layer from the map. Use it when the user no longer wants the layer.',
   setView: 'Moves the map to a layer, a box, a point or a place found by a query.'
@@ -182,6 +185,8 @@ export const addLayerDataSchema = z.strictObject({
 
 export const setLayerStyleDataSchema = z.strictObject({
   layerId: z.string().max(styleConfig.maxLayerIdChars),
+  /** The layer's name after the change (the new one when `name` was given). */
+  name: z.string().optional(),
   applied: appliedStyleSchema,
   warnings: z.array(z.string()).optional()
 });
@@ -305,6 +310,7 @@ const boundAddLayer = (data: AddLayerData): AddLayerData => ({
 
 const boundSetLayerStyle = (data: SetLayerStyleData): SetLayerStyleData => ({
   ...data,
+  ...(data.name === undefined ? {} : { name: truncateText(data.name, toolConfig.maxLayerNameChars) }),
   applied: clippedApplied(data.applied),
   ...withWarnings(data.warnings)
 });

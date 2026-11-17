@@ -20,10 +20,14 @@ export function inTopDownOrder<T extends Ordered>(layers: readonly T[]): T[] {
   return inDrawOrder(layers).reverse();
 }
 
-/** The map ids a layer gets: its GeoJSON source, and its map layers (a polygon has a fill and an outline). */
+/**
+ * The map ids a layer gets: its GeoJSON source, and its map layers (a polygon has a fill and an outline). A polygon
+ * layer's labels come from a second source (`labelSource`) of one point per feature, so its label layer is not on `source`.
+ */
 export function mapLayerIds(layerId: string) {
   return {
     source: layerId,
+    labelSource: `${layerId}-label-points`,
     fill: `${layerId}-fill`,
     outline: `${layerId}-outline`,
     line: `${layerId}-line`,

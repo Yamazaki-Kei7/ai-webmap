@@ -179,6 +179,32 @@ describe('buildSystemPrompt: content', () => {
     expect(prompt).toContain('style と label を付ければそれが新しい設定になり');
   });
 
+  it('says to rename with setLayerStyle when the name no longer fits, and to keep colours out of names', () => {
+    expect(prompt).toContain('見た目（色など）だけを変えるときは setLayerStyle の name、データや絞り込みを変えるときは addLayer（replaceLayerId）の name です');
+    expect(prompt).not.toContain('setLayerStyle で色や絞り込みを変えて');
+    expect(prompt).toContain('色や見た目（「赤の」「青系」など）は名前に入れません');
+  });
+
+  it('says to set a label minZoom only for a layer of many features, from the config, and to tell the zoom condition', () => {
+    const { labelMinZoomFeatureHint } = promptConfig;
+    expect(labelMinZoomFeatureHint).toBeGreaterThan(0);
+    expect(prompt).toContain(`minZoom は、レイヤーの地物が ${labelMinZoomFeatureHint} 個以上のときだけ付けます`);
+    expect(prompt).toContain('それより少ないときは付けません');
+    expect(prompt).toContain('最初の画面で出るのは一部で、ズームを上げると増えます');
+    expect(prompt).not.toContain('最初の画面で見えます');
+    expect(prompt).toContain('答えで「ズーム N 以上で名前が出ます」と伝えます');
+    // The label sample of the style section carries no minZoom.
+    expect(prompt).toContain('{"column":"station_name","size":12}');
+    expect(prompt).not.toContain('"size":12,"minZoom"');
+  });
+
+  it('says to name the types counted for a broad category', () => {
+    const answers = prompt.slice(prompt.indexOf('## 答え方'));
+    expect(answers).toContain('「学校」のような広い分類で頼まれ、データに種別があるとき');
+    expect(answers).toContain('どの種別を含めたかを必ず言います');
+    expect(answers).toContain('または、頼みから読める種別に絞って、どの種別かを言います');
+  });
+
   it('says what to do about each error and that missing data is not invented', () => {
     expect(prompt).toContain('SESSION_RESET: 地図が初期化されました');
     expect(prompt).toContain('人口');
@@ -304,6 +330,17 @@ describe('prompt examples', () => {
       expect(sql).toContain('GROUP BY pref_name, station_name');
       expect(sql).toContain('any_value(geom)');
     }
+  });
+
+  it('give no minZoom to a label of a small layer, and have a rename example for setLayerStyle', () => {
+    for (const example of promptExamples) {
+      for (const call of example.calls) {
+        if (call.tool === 'addLayer') expect(call.input.label?.minZoom, example.title).toBeUndefined();
+      }
+    }
+    const renames = promptExamples.flatMap((example) => example.calls.flatMap((call) => (call.tool === 'setLayerStyle' && call.input.name !== undefined ? [call.input.name] : [])));
+    expect(renames.length).toBeGreaterThan(0);
+    for (const name of renames) expect(name.length).toBeLessThanOrEqual(toolConfig.maxLayerNameChars);
   });
 
   it('name the column of a style change that an earlier part of the request establishes', () => {

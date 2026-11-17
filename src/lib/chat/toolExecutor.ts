@@ -29,7 +29,7 @@ export type ToolExecutorDeps = {
   map: {
     addLayer: (input: NewLayer, data: LayerQueryResult) => ClientToolResult<LayerState>;
     replaceLayer: (layerId: string, input: NewLayer, data: LayerQueryResult) => ClientToolResult<LayerState>;
-    setStyle: (layerId: string, style: StyleSpec) => ClientToolResult<LayerState>;
+    setStyle: (layerId: string, style: StyleSpec, name?: string) => ClientToolResult<LayerState>;
     setLabel: (layerId: string, label: LabelSpec | null) => ClientToolResult<LayerState>;
     removeLayer: (layerId: string) => boolean;
     getLayer: (layerId: string) => LayerState | undefined;
@@ -136,11 +136,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     return ok(data);
   }
 
-  function setLayerStyle({ layerId, style }: ToolInputs['setLayerStyle']): ToolResult {
-    const styled = map.setStyle(layerId, style);
+  function setLayerStyle({ layerId, style, name }: ToolInputs['setLayerStyle']): ToolResult {
+    const styled = map.setStyle(layerId, style, name);
     if (!styled.ok) return styled;
     const applied = map.appliedOf(layerId);
-    return applied === undefined ? unknownLayer(layerId) : ok({ layerId, applied });
+    return applied === undefined ? unknownLayer(layerId) : ok({ layerId, name: styled.data.name, applied });
   }
 
   function setLayerLabel({ layerId, label }: ToolInputs['setLayerLabel']): ToolResult {

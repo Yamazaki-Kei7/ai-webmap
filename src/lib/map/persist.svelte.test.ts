@@ -96,6 +96,12 @@ describe('toPersisted', () => {
     });
   });
 
+  it('keeps the name a restyle gave the layer', () => {
+    const layer = placed({ name: '鉄道路線（JRのみ赤）', sql: 'SELECT 1', style: { type: 'single', color: '#e41a1c' } });
+    expect(setStyle(layer.id, { type: 'single', color: '#0000ff' }, '鉄道路線（JRのみ）').ok).toBe(true);
+    expect(persisted().layers[0]).toMatchObject({ id: layer.id, name: '鉄道路線（JRのみ）', style: { type: 'single', color: '#0000ff' } });
+  });
+
   it('has no features and nothing resolved from them', () => {
     placed({ name: 'a', sql: 'SELECT 1', style: { type: 'categorized', column: 'kind' } });
     const text = JSON.stringify(persisted());

@@ -203,8 +203,8 @@ export function replaceLayer(layerId: string, input: NewLayer, data: LayerQueryR
   return { ok: true, data: layer };
 }
 
-/** Restyles a layer against the features it already holds (no data is sent to the map again). An error changes nothing. */
-export function setStyle(layerId: string, style: StyleSpec): ClientToolResult<LayerState> {
+/** Restyles a layer against the features it already holds (no data is sent to the map again), and renames it when `name` is given. An error changes nothing. */
+export function setStyle(layerId: string, style: StyleSpec, name?: string): ClientToolResult<LayerState> {
   const layer = mapState.layers.find((l) => l.id === layerId);
   const features = featuresByLayer.get(layerId);
   if (!layer) return unknownLayer(layerId);
@@ -213,6 +213,7 @@ export function setStyle(layerId: string, style: StyleSpec): ClientToolResult<La
   if (!resolved.ok) return resolved;
   layer.style = style;
   layer.resolved = resolved.data;
+  if (name !== undefined) layer.name = name;
   return { ok: true, data: layer };
 }
 

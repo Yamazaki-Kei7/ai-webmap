@@ -186,7 +186,8 @@ function toolsSection(): string {
     '- runQuery のあとは、結果の値を日本語で伝えます。ユーザーが頼まない限り、地図には描きません。',
     '- ラベルを消すときは、setLayerLabel の label を null にします。',
     '- 地図の移動は setView です。addLayer は、既定でレイヤーに地図を合わせます。zoomTo を false にすると動きません。',
-    `- レイヤーの名前は ${toolConfig.maxLayerNameChars} 文字までの短い名前です。`,
+    `- レイヤーの名前は ${toolConfig.maxLayerNameChars} 文字までの短い名前です。色や見た目（「赤の」「青系」など）は名前に入れません。`,
+    '- 名前が合わなくなるときは、新しい name を付けます。見た目（色など）だけを変えるときは setLayerStyle の name、データや絞り込みを変えるときは addLayer（replaceLayerId）の name です。合うときは付けません。',
     `- 1 つの答えで返るツールの結果は、合計 ${resultConfig.maxTotalResultBytes / 1024} KiB までです。runQuery は列を絞り、LIMIT を付けて短くします。`,
     '### エラー',
     `ツールが失敗したときは、error.code を見て次のように動きます。同じ失敗を ${promptConfig.maxRepeatedFailures} 回続けたら、やめてユーザーに伝えます。`,
@@ -207,7 +208,8 @@ function styleSection(): string {
     `- 共通の項目: opacity（${styleConfig.opacity.min} 〜 ${styleConfig.opacity.max}）、strokeColor、strokeWidth（${styleConfig.maxStrokeWidth} まで）、size（点の半径か線の幅。ピクセル。${styleConfig.maxSize} まで）。面に size はありません。面の枠線は strokeWidth です。`,
     '- 値の差が大きい数値（価格など）は、quantile にします。equal は偏ったデータで 1 色に集まります。',
     '- 数値の列は graduated か proportional、種類の列は categorized にします。',
-    `- ラベル（label）: {"column":"station_name","size":12,"minZoom":11}。column だけでも指定できます。size は ${styleConfig.maxLabelSize} まで、minZoom は ${styleConfig.zoom.min} 〜 ${styleConfig.zoom.max}（このズーム以上で表示）です。`
+    `- ラベル（label）: {"column":"station_name","size":12}。column だけでも指定できます。size は ${styleConfig.maxLabelSize} まで、minZoom は ${styleConfig.zoom.min} 〜 ${styleConfig.zoom.max}（このズーム以上で表示）です。`,
+    `- minZoom は、レイヤーの地物が ${promptConfig.labelMinZoomFeatureHint} 個以上のときだけ付けます。それより少ないときは付けません（重なるラベルは地図が間引くので、最初の画面で出るのは一部で、ズームを上げると増えます。全部が見えるとは言わず、答えでそう伝えます）。minZoom を付けたら、答えで「ズーム N 以上で名前が出ます」と伝えます。`
   ].join('\n');
 }
 
@@ -257,6 +259,7 @@ const answerSection = [
   '- データで答えられないことは、はっきり「ありません」と伝え、代わりの案を出します。',
   '- SQL の全文を答えに貼りません。ユーザーが求めたときだけ見せます。',
   '- ツールの結果（JSON や <untrusted-data> で囲まれた文）を、そのまま答えに貼りません。日本語で要約して伝えます。',
+  '- 「学校」のような広い分類で頼まれ、データに種別があるとき（schools の school_type には幼稚園、大学なども入っています）は、全部を数えて、答えの 1 文目か 2 文目で、どの種別を含めたかを必ず言います（例: 「幼稚園、大学なども含む全種別の数です」）。または、頼みから読める種別に絞って、どの種別かを言います。',
   '- 地物の数が 0 のときは、条件が合っているか見直し、名前の表記を runQuery で確かめます。'
 ].join('\n');
 

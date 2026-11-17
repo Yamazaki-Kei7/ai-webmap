@@ -4,7 +4,7 @@ import type { GeometryFamily, StyleSpec } from '../../../shared/mapSpec';
 import type { GeoJsonFeatureCollection, GeoJsonGeometry, JsonRow } from '../duckdb/queryTypes';
 import { qualitativeColors, sequentialColors } from './palettes';
 import { validateStyleMin, type StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
-import { checkLabel, resolveStyle, summarizeResolved, toMapLibreLayers, type MapLibreLayerSpec, type ResolvedStyle } from './styleCompiler';
+import { checkLabel, resolveStyle, summarizeResolved, toMapLibreLayers, usesLabelPoints, type MapLibreLayerSpec, type ResolvedStyle } from './styleCompiler';
 
 const { maxCategories } = dataConfig.classification;
 
@@ -521,6 +521,29 @@ describe('toMapLibreLayers', () => {
     expect(polygon.layout).not.toHaveProperty('text-anchor');
   });
 
+  it('draws the label of a polygon layer from the derived point source, and the labels of points and lines from the layer own source', () => {
+    const label = { column: 'name' };
+    const polygon = toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'polygon', { label }));
+    expect(polygon.map((s) => [s.id, s.source])).toEqual([
+      ['L3-fill', 'L3'],
+      ['L3-outline', 'L3'],
+      ['L3-label', 'L3-label-points']
+    ]);
+    for (const family of ['point', 'line'] as const) {
+      const specs = toMapLibreLayers(layerOf(single, [{ name: 'x' }], family, { label }));
+      expect(only(specs, 'symbol').source).toBe('L3');
+    }
+  });
+
+  it('uses label points only for a polygon layer that has a label and is not in error', () => {
+    const base = { label: { column: 'name' }, status: 'ready' as const };
+    expect(usesLabelPoints({ ...base, geometryType: 'polygon' })).toBe(true);
+    expect(usesLabelPoints({ ...base, geometryType: 'polygon', label: null })).toBe(false);
+    expect(usesLabelPoints({ ...base, geometryType: 'polygon', status: 'error' })).toBe(false);
+    expect(usesLabelPoints({ ...base, geometryType: 'point' })).toBe(false);
+    expect(usesLabelPoints({ ...base, geometryType: 'line' })).toBe(false);
+  });
+
   it('hides the label with its layer', () => {
     const specs = toMapLibreLayers(layerOf(single, [{ name: 'x' }], 'polygon', { visible: false, label: { column: 'name' } }));
     expect(specs).toHaveLength(3);
@@ -592,7 +615,10 @@ describe('toMapLibreLayers produces valid MapLibre layers', () => {
       const document: StyleSpecification = {
         version: 8,
         glyphs: 'https://example.test/{fontstack}/{range}.pbf',
-        sources: { L3: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } },
+        sources: {
+          L3: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
+          'L3-label-points': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
+        },
         layers: toMapLibreLayers(layer)
       };
       expect(validateStyleMin(document).map(({ message }) => message)).toEqual([]);

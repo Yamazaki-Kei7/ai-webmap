@@ -167,7 +167,9 @@ export const promptConfig = {
   /** A coarse `ST_DWithin` before a `_spheroid` test: metres divided by this are enough (a degree of longitude is at least about 78 km in Japan). */
   coarseMetresPerDegree: 70_000,
   /** `ST_DWithin` alone, for lines and polygons: metres divided by this give a degree value that is right within about 20 % in Japan. */
-  approxMetresPerDegree: 100_000
+  approxMetresPerDegree: 100_000,
+  /** A label gets a `minZoom` only for a layer of at least this many features; with fewer, the map's collision handling thins the labels and they show on the first view. */
+  labelMinZoomFeatureHint: 1_000
 } as const;
 
 export const urlConfig = {

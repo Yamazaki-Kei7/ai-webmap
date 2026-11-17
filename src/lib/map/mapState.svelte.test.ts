@@ -257,6 +257,20 @@ describe('layer style and label', () => {
       expect(getFeatures(layer.id)).toBe(features);
     });
 
+    it('renames the layer when a name is given, and keeps the name when it is not', () => {
+      const layer = added({ name: 'a', sql: 's' }, people);
+      expect(setStyle(layer.id, graduated).ok).toBe(true);
+      expect(layer.name).toBe('a');
+      expect(setStyle(layer.id, graduated, 'b').ok).toBe(true);
+      expect(layer.name).toBe('b');
+    });
+
+    it('does not rename the layer on an error', () => {
+      const layer = added({ name: 'a', sql: 's' }, people);
+      expect(failure(setStyle(layer.id, { type: 'categorized', column: 'nope' }, 'b')).code).toBe('UNKNOWN_COLUMN');
+      expect(layer.name).toBe('a');
+    });
+
     it('changes nothing on an error', () => {
       const layer = added({ name: 'a', sql: 's', style: graduated }, people);
       const style = $state.snapshot(layer.style);

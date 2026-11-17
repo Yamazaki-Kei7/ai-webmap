@@ -393,6 +393,34 @@ describe('createToolExecutor', () => {
       expect(getLayer('L1')?.style.type).toBe('proportional');
     });
 
+    it('answers the layer name, which stays when no name is given', async () => {
+      const data = success(await run(state, { tool: 'setLayerStyle', input: { layerId: 'L1', style: { type: 'single', color: '#112233' } } }));
+      expect(data.name).toBe('駅');
+      expect(getLayer('L1')?.name).toBe('駅');
+    });
+
+    it('renames the layer together with the style, and answers the new name', async () => {
+      const data = success(await run(state, { tool: 'setLayerStyle', input: { layerId: 'L1', name: '青い駅', style: { type: 'single', color: '#0000ff' } } }));
+      expect(data).toMatchObject({ layerId: 'L1', name: '青い駅' });
+      expect(getLayer('L1')).toMatchObject({ name: '青い駅', style: { type: 'single', color: '#0000ff' } });
+      // <map_state> reads the same name.
+      expect(summarizeForLlm().layers.find((layer) => layer.id === 'L1')?.name).toBe('青い駅');
+    });
+
+    it('keeps the old name when the style fails', async () => {
+      const result = await run(state, { tool: 'setLayerStyle', input: { layerId: 'L1', name: '新しい名前', style: { type: 'categorized', column: 'nope' } } });
+      expect(failure(result).code).toBe('UNKNOWN_COLUMN');
+      expect(getLayer('L1')?.name).toBe('駅');
+    });
+
+    it('rejects a name that is too long or empty (INVALID_INPUT)', async () => {
+      const style = { type: 'single' as const, color: '#112233' };
+      const tooLong = 'x'.repeat(toolConfig.maxLayerNameChars + 1);
+      expect(failure(await run(state, { tool: 'setLayerStyle', input: { layerId: 'L1', name: tooLong, style } })).code).toBe('INVALID_INPUT');
+      expect(failure(await run(state, { tool: 'setLayerStyle', input: { layerId: 'L1', name: '', style } })).code).toBe('INVALID_INPUT');
+      expect(getLayer('L1')?.name).toBe('駅');
+    });
+
     it('answers UNKNOWN_LAYER, UNKNOWN_COLUMN and INVALID_STYLE, changing nothing', async () => {
       const before = JSON.stringify(getLayer('L1'));
       expect(failure(await run(state, { tool: 'setLayerStyle', input: { layerId: 'L7', style: { type: 'single', color: '#112233' } } })).code).toBe('UNKNOWN_LAYER');

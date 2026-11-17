@@ -117,6 +117,16 @@ describe('toolInputSchemas', () => {
     expect(toolInputSchemas.setLayerStyle.safeParse({ layerId: 'L1' }).success).toBe(false);
   });
 
+  it('setLayerStyle takes an optional name with the validation of the addLayer name', () => {
+    const style = { type: 'single' as const, color: '#112233' };
+    const run = (name?: string) => toolInputSchemas.setLayerStyle.safeParse({ layerId: 'L1', style, ...(name === undefined ? {} : { name }) }).success;
+    expect(run()).toBe(true);
+    expect(run('青い駅')).toBe(true);
+    expect(run('x'.repeat(toolConfig.maxLayerNameChars))).toBe(true);
+    expect(run('x'.repeat(toolConfig.maxLayerNameChars + 1))).toBe(false);
+    expect(run('')).toBe(false);
+  });
+
   it.each(toolNames)('%s describes every parameter in under 100 characters', (tool) => {
     const { properties } = z.toJSONSchema(toolInputSchemas[tool]);
     expect(properties).toBeDefined();
@@ -182,6 +192,10 @@ const validData: Record<ToolName, object> = {
 describe('result data schemas', () => {
   it.each(toolNames)('%s accepts its valid result', (tool) => {
     expect(toolResultSchemas[tool].safeParse(validData[tool]).success).toBe(true);
+  });
+
+  it('accepts a setLayerStyle answer with the layer name', () => {
+    expect(setLayerStyleDataSchema.safeParse({ layerId: 'L1', name: '青い路線', applied }).success).toBe(true);
   });
 
   it('accepts a label that was removed', () => {
@@ -304,6 +318,12 @@ describe('fitToolResult: layer answers', () => {
     expect(fitted.ok && 'applied' in fitted.data && fitted.data.layerId === 'L2').toBe(true);
     const tight = fitToolResult(styled, 150);
     expect(tight.ok && 'applied' in tight.data && tight.data.warnings).toEqual([]);
+  });
+
+  it('cuts the layer name of a setLayerStyle answer', () => {
+    const long = 'x'.repeat(toolConfig.maxLayerNameChars + 30);
+    const fitted = fitToolResult({ ok: true, data: { layerId: 'L2', name: long, applied: { type: 'single', color: '#ff0000' } } });
+    expect(fitted.ok && 'applied' in fitted.data && Array.from(fitted.data.name ?? '').length).toBe(toolConfig.maxLayerNameChars);
   });
 
   it('leaves a small single-colour answer as it is', () => {

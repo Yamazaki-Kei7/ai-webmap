@@ -36,6 +36,7 @@ describe('mapLayerIds', () => {
   it('derives the source and every map layer id from the layer id', () => {
     expect(mapLayerIds('L7')).toEqual({
       source: 'L7',
+      labelSource: 'L7-label-points',
       fill: 'L7-fill',
       outline: 'L7-outline',
       line: 'L7-line',
