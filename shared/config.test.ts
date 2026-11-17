@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentConfig,
   dataConfig,
+  engineConfig,
   mapConfig,
   queryConfig,
   resultConfig,
@@ -26,11 +27,19 @@ describe('config invariants', () => {
       queryConfig.maxSqlChars,
       queryConfig.maxFeaturesPerLayer,
       urlConfig.signedUrlTtlSeconds,
+      urlConfig.refreshMarginSeconds,
+      engineConfig.threads,
+      engineConfig.initTimeoutMs,
+      engineConfig.maxErrorChars,
       agentConfig.maxLlmCalls,
       agentConfig.maxToolIterations,
       agentConfig.maxUtteranceChars
     ];
     for (const value of numbers) expect(value).toBeGreaterThan(0);
+  });
+
+  it('refreshes the signed URLs before they expire', () => {
+    expect(urlConfig.refreshMarginSeconds).toBeLessThan(urlConfig.signedUrlTtlSeconds);
   });
 
   it('keeps the default class count inside the allowed range', () => {

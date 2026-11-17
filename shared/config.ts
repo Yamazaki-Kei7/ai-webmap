@@ -29,7 +29,24 @@ export const resultConfig = {
 } as const;
 
 export const urlConfig = {
-  signedUrlTtlSeconds: 60 * 60
+  signedUrlTtlSeconds: 60 * 60,
+  /** The browser fetches the dataset sources again before a lazy data fetch when the held URLs expire within this time. */
+  refreshMarginSeconds: 300
+} as const;
+
+/** The browser's DuckDB-WASM engine (`src/lib/duckdb/`). */
+export const engineConfig = {
+  /** `SET threads`: the `eh` build has no worker threads, so one. */
+  threads: 1,
+  /** `SET memory_limit`: DuckDB's own cap, below the 4 GB a WebAssembly memory can reach. */
+  memoryLimit: '2GB',
+  /**
+   * An initialisation (sources, worker, wasm, spatial, settings) that is not done by then fails with an error and
+   * can be retried. Well above the measured ~2 s (worst of the spike 5.4 s): it also covers a 34 MB wasm on a slow line.
+   */
+  initTimeoutMs: 30_000,
+  /** Longest error text (characters) the engine reports to the UI. */
+  maxErrorChars: 200
 } as const;
 
 export const dataConfig = {

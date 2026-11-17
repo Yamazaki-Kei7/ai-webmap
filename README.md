@@ -247,6 +247,15 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 - `+page.server.ts`、`+server.ts`、`hooks.server.ts` はデプロイ後に動きません。サーバー側の処理は `aws-blocks/index.ts` に書きます。
 - Blocks の UI 部品は DOM 要素です。`src/lib/mountNode.ts` の `mountNode` で取り付けます。
 
+### データエンジン（DuckDB-WASM）
+
+`src/lib/duckdb/` がブラウザ内の DuckDB-WASM（`eh` ビルドのみ）を起動し、Parquet を必要になった時点で取得してビューにします。サインイン後に `+page.svelte` が起動し、サインアウトで破棄します。
+
+- wasm と各 Parquet は、`api.getDatasetSources()` が返す署名付き URL から取得します（許可リストのユーザーのみ）。署名付き URL は HEAD に 403 を返すので、ファイルは丸ごと `fetch` します。
+- 初期化のたびに URL を取り直します。遅延取得の前は、有効期限まで `urlConfig.refreshMarginSeconds` を切っていれば取り直し、403 なら一度だけ取り直して再試行します。
+- 設定は `engineConfig`（`shared/config.ts`）。`SET lock_configuration = true` で固定します。外部読み取りの防御は SQL ガード（`shared/sqlGuard.ts`）です。
+- 開発サーバー（`import.meta.env.DEV`）では `window.__aiWebmapEngine`（`ensureViews` / `count(id)` / `scalar(sql)`）で、UI なしにブラウザから確認できます。本番ビルドには入りません。
+
 ## スタック名
 
 CloudFormation のスタック名は `.blocks/config.json` の `stackId` から決まります（本番は `<stackId>-prod`）。変えると別のスタックになるので、変えないでください。
