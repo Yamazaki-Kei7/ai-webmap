@@ -91,5 +91,20 @@ const initialCenter: [number, number] = [137.0, 38.0];
 export const mapConfig = {
   basemapStyleUrl: 'https://tiles.openfreemap.org/styles/positron',
   /** Whole of Japan. */
-  initialView: { center: initialCenter, zoom: 4 }
+  initialView: { center: initialCenter, zoom: 4 },
+  /** Provisional single colours of a layer until Phase 3 styles it; cycled by the layer's sequence number. */
+  defaultLayerColors: ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628'],
+  /** Padding (pixels) around a layer's bounding box when the map is fitted to it. */
+  fitPaddingPx: 48,
+  fitDurationMs: 600,
+  /** A layer of one point (or a tiny extent) is not zoomed in beyond this. */
+  fitMaxZoom: 14,
+  /** Provisional layer paint. */
+  paint: {
+    fillOpacity: 0.5,
+    lineWidth: 2,
+    outlineWidth: 1,
+    circleRadius: 4,
+    circleOpacity: 0.8
+  }
 } as const;

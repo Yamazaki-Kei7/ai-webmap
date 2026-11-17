@@ -1,3 +1,5 @@
+import type { Map as MaplibreMap } from 'maplibre-gl';
+import { addLayer } from '../map/mapState.svelte';
 import type { ClientToolResult } from '../../../shared/toolProtocol';
 import { ensureViews, queryLayer, queryScalar, queryTable, type LayerQueryResult, type TableQueryResult } from './engine';
 import type { QueryTimeouts } from './query';
@@ -17,10 +19,15 @@ export type EngineDevHandle = {
 declare global {
   interface Window {
     __aiWebmapEngine?: EngineDevHandle;
+    /** The MapLibre instance of the map view (browser checks of the style layers and the draw order). */
+    __aiWebmapMap?: MaplibreMap;
+    /** Adds layers without the dev SQL box (the browser check of layers added in one tick). */
+    __aiWebmapAddLayer?: typeof addLayer;
   }
 }
 
 export function installDevHandle(): void {
+  window.__aiWebmapAddLayer = addLayer;
   window.__aiWebmapEngine = {
     ensureViews,
     count: async (id) => {
@@ -31,4 +38,8 @@ export function installDevHandle(): void {
     queryLayer,
     queryTable
   };
+}
+
+export function exposeMap(map: MaplibreMap): void {
+  window.__aiWebmapMap = map;
 }

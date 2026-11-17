@@ -78,6 +78,22 @@ describe('buildFeatureCollection', () => {
     }
   });
 
+  it('refuses coordinates that do not nest as the type says', () => {
+    const wrong = [
+      { type: 'Point', coordinates: [[1, 2]] },
+      { type: 'Point', coordinates: [1] },
+      { type: 'Point', coordinates: ['1', '2'] },
+      { type: 'LineString', coordinates: [1, 2] },
+      { type: 'LineString', coordinates: [[[0, 0], [1, 1]]] },
+      { type: 'Polygon', coordinates: [[0, 0], [1, 1]] },
+      { type: 'MultiPolygon', coordinates: [[[0, 0], [1, 1]]] },
+      { type: 'MultiPoint', coordinates: [[0, 'x']] }
+    ];
+    for (const geometry of wrong) {
+      expect(buildFeatureCollection([row(geometry)]), JSON.stringify(geometry)).toMatchObject({ ok: false, reason: 'invalid' });
+    }
+  });
+
   it('refuses a GeometryCollection', () => {
     const result = buildFeatureCollection([row({ type: 'GeometryCollection', geometries: [] })]);
     expect(result.ok).toBe(false);

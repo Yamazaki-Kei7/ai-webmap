@@ -66,4 +66,11 @@ describe('config invariants', () => {
     expect(Math.abs(lng)).toBeLessThanOrEqual(180);
     expect(Math.abs(lat)).toBeLessThanOrEqual(90);
   });
+
+  it('gives layers a palette of distinct hex colours', () => {
+    const colors = mapConfig.defaultLayerColors;
+    expect(colors.length).toBeGreaterThan(0);
+    for (const color of colors) expect(color).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(new Set(colors).size).toBe(colors.length);
+  });
 });

@@ -5,12 +5,15 @@ export type ColumnInfo = { name: string; type: 'string' | 'number' | 'boolean' |
 export type JsonValue = string | number | boolean | null;
 export type JsonRow = Record<string, JsonValue>;
 
-/** The GeoJSON geometries a layer can hold (`GeometryCollection` is refused before it gets here). */
-export type Coordinates = number | Coordinates[];
-export type GeoJsonGeometry = {
-  type: 'Point' | 'MultiPoint' | 'LineString' | 'MultiLineString' | 'Polygon' | 'MultiPolygon';
-  coordinates: Coordinates;
-};
+/** A position: longitude, latitude and optionally a height. */
+export type Position = [number, number, ...number[]];
+
+/** The GeoJSON geometries a layer can hold, with the nesting of `coordinates` each type has (`GeometryCollection` is refused before it gets here). */
+export type GeoJsonGeometry =
+  | { type: 'Point'; coordinates: Position }
+  | { type: 'MultiPoint' | 'LineString'; coordinates: Position[] }
+  | { type: 'MultiLineString' | 'Polygon'; coordinates: Position[][] }
+  | { type: 'MultiPolygon'; coordinates: Position[][][] };
 export type GeoJsonFeature = { type: 'Feature'; id: number; geometry: GeoJsonGeometry; properties: JsonRow };
 export type GeoJsonFeatureCollection = { type: 'FeatureCollection'; features: GeoJsonFeature[] };
 

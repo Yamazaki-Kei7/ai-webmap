@@ -1,5 +1,5 @@
 import type { GeometryFamily } from '../../../shared/mapSpec';
-import type { Bbox, Coordinates, GeoJsonFeature, GeoJsonFeatureCollection, GeoJsonGeometry, JsonRow } from './queryTypes';
+import type { Bbox, GeoJsonFeature, GeoJsonFeatureCollection, GeoJsonGeometry, JsonRow, Position } from './queryTypes';
 
 /** One result row: the attribute values (already converted) and the geometry as the text of `ST_AsGeoJSON`, or NULL. */
 export type FeatureRow = { properties: JsonRow; geometry: string | null };
@@ -29,8 +29,11 @@ const geometryFamilies: Record<GeoJsonGeometry['type'], GeometryFamily> = {
 
 const familyNames: Record<GeometryFamily, string> = { point: 'points', line: 'lines', polygon: 'polygons' };
 
+/** Coordinates as parsed, before their nesting is checked. */
+type Nested = number | Nested[];
+
 /** The parsed text of a geometry, before it is checked. */
-type ParsedGeometry = { type?: string; coordinates?: Coordinates };
+type ParsedGeometry = { type?: string; coordinates?: Nested };
 
 const invalidMessage = 'The geom column holds a value that is not a geometry.';
 
@@ -48,23 +51,49 @@ function isGeometryType(type: string | undefined): type is GeoJsonGeometry['type
   return type !== undefined && Object.hasOwn(geometryFamilies, type);
 }
 
-/** Widens `bbox` by every position (`[lon, lat, ...]`) in `coordinates`; false when there is none. */
-function extendBbox(coordinates: Coordinates, bbox: Bbox): boolean {
-  if (typeof coordinates === 'number') return false;
-  if (typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
-    const lon = coordinates[0];
-    const lat = coordinates[1];
-    bbox[0] = Math.min(bbox[0], lon);
-    bbox[1] = Math.min(bbox[1], lat);
-    bbox[2] = Math.max(bbox[2], lon);
-    bbox[3] = Math.max(bbox[3], lat);
-    return true;
+/** The positions found while the coordinates are checked: their count and the box around them. */
+type Walk = { positions: number; bbox: Bbox };
+
+/** A position (`[lon, lat, ...]`): it widens the box of the walk. */
+function isPosition(coordinates: Nested, walk: Walk): coordinates is Position {
+  if (!Array.isArray(coordinates) || coordinates.length < 2) return false;
+  if (!coordinates.every((value) => typeof value === 'number')) return false;
+  const [lon, lat] = coordinates;
+  if (typeof lon !== 'number' || typeof lat !== 'number') return false;
+  walk.positions += 1;
+  walk.bbox[0] = Math.min(walk.bbox[0], lon);
+  walk.bbox[1] = Math.min(walk.bbox[1], lat);
+  walk.bbox[2] = Math.max(walk.bbox[2], lon);
+  walk.bbox[3] = Math.max(walk.bbox[3], lat);
+  return true;
+}
+
+/** An array whose every item passes `isItem`; the walk goes through each item once. */
+function isArrayOf<T extends Nested>(coordinates: Nested, isItem: (item: Nested, walk: Walk) => item is T, walk: Walk): coordinates is T[] {
+  return Array.isArray(coordinates) && coordinates.every((item) => isItem(item, walk));
+}
+
+const isPositions = (c: Nested, walk: Walk): c is Position[] => isArrayOf(c, isPosition, walk);
+const isRings = (c: Nested, walk: Walk): c is Position[][] => isArrayOf(c, isPositions, walk);
+const isPolygons = (c: Nested, walk: Walk): c is Position[][][] => isArrayOf(c, isRings, walk);
+
+/**
+ * The geometry of a type and its coordinates, checked to nest as the type says and walked once for the box of `walk`.
+ * Undefined when the nesting is wrong.
+ */
+function toGeometry(type: GeoJsonGeometry['type'], coordinates: Nested, walk: Walk): GeoJsonGeometry | undefined {
+  switch (type) {
+    case 'Point':
+      return isPosition(coordinates, walk) ? { type, coordinates } : undefined;
+    case 'MultiPoint':
+    case 'LineString':
+      return isPositions(coordinates, walk) ? { type, coordinates } : undefined;
+    case 'MultiLineString':
+    case 'Polygon':
+      return isRings(coordinates, walk) ? { type, coordinates } : undefined;
+    case 'MultiPolygon':
+      return isPolygons(coordinates, walk) ? { type, coordinates } : undefined;
   }
-  let found = false;
-  for (const inner of coordinates) {
-    if (extendBbox(inner, bbox)) found = true;
-  }
-  return found;
 }
 
 /**
@@ -90,14 +119,17 @@ export function buildFeatureCollection(rows: readonly FeatureRow[]): FeatureColl
       otherType ??= parsed.type ?? 'unknown';
       return;
     }
-    if (parsed.coordinates === undefined || !extendBbox(parsed.coordinates, bbox)) return;
+    // An empty geometry (`POINT EMPTY`, no coordinates) has no feature.
+    if (parsed.coordinates === undefined || (Array.isArray(parsed.coordinates) && parsed.coordinates.length === 0)) return;
+    const walk: Walk = { positions: 0, bbox };
+    const geometry = toGeometry(parsed.type, parsed.coordinates, walk);
+    if (geometry === undefined) {
+      invalid = true;
+      return;
+    }
+    if (walk.positions === 0) return;
     families.add(geometryFamilies[parsed.type]);
-    features.push({
-      type: 'Feature',
-      id: index,
-      geometry: { type: parsed.type, coordinates: parsed.coordinates },
-      properties: row.properties
-    });
+    features.push({ type: 'Feature', id: index, geometry, properties: row.properties });
   });
 
   if (invalid) return { ok: false, reason: 'invalid', message: invalidMessage };
