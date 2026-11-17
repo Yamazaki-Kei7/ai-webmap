@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- First-paint tokens only. The authoritative token layer (incl. the
+       .bb-* component classes) is @aws-blocks/auth-common's THEME_CSS,
+       injected by the components at runtime; this inline copy exists so a
+       dark-mode user's first paint already uses the dark palette instead of
+       flashing white until the deferred module bundle runs. -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bb-color-bg: #ffffff; --bb-color-surface: #ffffff; --bb-color-surface-alt: #f4f6f9;
+      --bb-color-text: #16191f; --bb-color-text-muted: #5f6b7a; --bb-color-border: #d5dbdb;
+      --bb-color-accent: #0972d3; --bb-color-success: #037f0c; --bb-color-danger: #d91515;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-bb-theme="light"]) {
+        color-scheme: dark;
+        --bb-color-bg: #0f1b2a; --bb-color-surface: #1a2634; --bb-color-surface-alt: #232f3e;
+        --bb-color-text: #e9ebed; --bb-color-text-muted: #a9b4c0; --bb-color-border: #3b4858;
+        --bb-color-accent: #539fe5; --bb-color-success: #29ad32; --bb-color-danger: #ff7170;
+      }
+    }
+  </style>
+  %sveltekit.head%
+</head>
+<body class="bg-bb-bg font-sans text-bb-text" data-sveltekit-preload-data="hover">
+  <div style="display: contents">%sveltekit.body%</div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+/* Scan only src/ (this file's directory) for class names. By default Tailwind
+   scans and watches the whole project root, including the dev server's local
+   data in .bb-data/ — every backend write would then reload the page. */
+@import 'tailwindcss' source('.');
+
+/* Expose the Blocks UI design tokens (--bb-*, injected at runtime by
+   @aws-blocks/blocks/ui) as Tailwind theme values, so app markup follows the
+   same light/dark palette as the auth components: bg-bb-surface, text-bb-muted… */
+@theme inline {
+  --color-bb-bg: var(--bb-color-bg);
+  --color-bb-surface: var(--bb-color-surface);
+  --color-bb-surface-alt: var(--bb-color-surface-alt);
+  --color-bb-text: var(--bb-color-text);
+  --color-bb-muted: var(--bb-color-text-muted);
+  --color-bb-border: var(--bb-color-border);
+  --color-bb-accent: var(--bb-color-accent);
+  --color-bb-accent-hover: var(--bb-color-accent-hover);
+  --color-bb-accent-text: var(--bb-color-accent-text);
+  --color-bb-success: var(--bb-color-success);
+  --color-bb-danger: var(--bb-color-danger);
+  --color-bb-focus-ring: var(--bb-color-focus-ring);
+  --font-sans: var(--bb-font-family);
+}

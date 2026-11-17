@@ -1,0 +1,20 @@
+node_modules/
+
+# SvelteKit
+.svelte-kit/
+build/
+
+# AWS Blocks / CDK
+# .bb-data/ is the dev server's local data (users, todos); delete it to reset.
+.bb-data/
+.blocks-sandbox/
+.hosting/
+cdk.out/
+
+# Misc
+.DS_Store
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
