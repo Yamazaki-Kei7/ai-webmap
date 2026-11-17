@@ -38,6 +38,8 @@ describe('config invariants', () => {
       agentConfig.maxLlmCalls,
       agentConfig.maxToolIterations,
       agentConfig.maxUtteranceChars,
+      agentConfig.maxInterruptResponses,
+      agentConfig.maxInterruptIdChars,
       toolConfig.maxLayerNameChars,
       toolConfig.maxQueryColumns,
       toolConfig.maxResultLayers,

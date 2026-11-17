@@ -12,6 +12,7 @@ import { ApiError, ApiNamespace, DEFAULT_API_ERROR_NAME, isWireSafeError } from 
 import type { AuthActionInput, AuthState } from '@aws-blocks/blocks';
 import { requireAdmin, requireAllowedUser } from './access.js';
 import { auth } from './auth.js';
+import { conversationMethods } from './conversation.js';
 import { signedDownloadUrl, signedUploadUrl } from './datasets.js';
 import { type LlmMode } from './llm-mode.js';
 import { llmMode } from './runtime-config.js';
@@ -117,4 +118,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     }
     return { url: await signedUploadUrl(parsed.data) };
   },
+
+  // The chat's conversation API (`aws-blocks/conversation.ts`): the same access check, then ownership of the conversation.
+  ...conversationMethods(context),
 }));

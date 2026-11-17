@@ -68,7 +68,23 @@ SQL ボックスの下にスタイルボックスもあります。レイヤー�
 
 #### 開発サーバーのモデル種別
 
-`AGENT_LOCAL_MODEL`（`bedrock` または `canned`。未設定は `bedrock`）で、ローカルのエージェントのモデル種別を切り替えます。それ以外の値だと、開発サーバーはポートを開かず、`AGENT_LOCAL_MODEL must be one of bedrock, canned (got "..."); unset it for bedrock.` というエラーで読み込みに失敗します（実行して確認済み）。`getAppInfo` がこの値を返します。デプロイ先では設定しません。E2E は、自分で開発サーバーを起動するとき `canned` を設定します。
+`AGENT_LOCAL_MODEL`（`bedrock` または `canned`。未設定は `bedrock`）で、ローカルのエージェントのモデル種別を切り替えます。それ以外の値だと、開発サーバーはポートを開かず、`AGENT_LOCAL_MODEL must be one of bedrock, canned (got "..."); unset it for bedrock.` というエラーで読み込みに失敗します（実行して確認済み）。`getAppInfo` がこの値を返します。デプロイ先では設定しません。E2E は、自分で開発サーバーを起動するとき `canned` を設定します。`canned` のモデルは、実際のモデルを呼ばず、発言にツール名（または名前の単語）があるとそのツールを 1 回呼び、結果を受けると固定の文で終わります。入力は、各ツールの有効な例（`aws-blocks/agent-canned.ts`）です。
+
+`bedrock` を選んでも、Bedrock が使えない（資格情報が切れている、モデルが使えないなど）と、ブロックは何も知らせずに `canned` に切り替わります。実モデルの確認では、Bedrock が実際に答えたこと（`canned` の固定文ではないこと、`done` の `usage` がゼロでないこと）を確かめてください（Task 4.5 の確認の条件）。
+
+#### 会話の API（`api` の `agent*`）
+
+チャットの会話は、Agent ブロックが動かします（`aws-blocks/agent.ts`）。6 つのツールはブラウザで動くので、ツールの処理（`aws-blocks/agent-tools.ts`）は入力を検査し（SQL は SQL ガードも通す。却下は `SQL_REJECTED` で、ブラウザに送らない）、`interrupt` でブラウザに渡し、返ってきた JSON 文字列を検査して返します。
+
+| メソッド | 内容 |
+|------|------|
+| `agentCreateConversationId()` | 呼び出した人のものとして会話 ID（UUID）を発行する |
+| `agentGetChannel(conversationId)` | Realtime のチャンネル（名前は会話 ID）の `{ channel }` |
+| `agentStream(message, conversationId, mapContext)` | ターンを始める。地図の状態を `<map_state>` として発言の後ろに付ける（`shared/mapState.ts`） |
+| `agentResume(conversationId, responses)` | interrupt に答える（`{ interruptId, response }` の配列。`response` はツール結果の JSON 文字列） |
+| `agentGetConversation(conversationId)`、`agentGetPendingInterrupts(conversationId)` | 履歴と、答えていない interrupt |
+
+どれも、サインイン、利用許可の一覧、引数の検査（400）、会話の所有者の確認（他人の会話と存在しない会話は、どちらも 404）の順に確かめます。Agent ブロックは所有者を確認しないので、確認はここにあります。所有者は、会話 ID を発行するときに `KVStore`（`aws-blocks/conversation-owners.ts`、会話 ID から利用者名）へ記録し、確認は 1 回の `get` です。`agentResume` は、保留中の interrupt の ID だけを受け付けます（偽の ID、重複、答え済みの ID は 409 `InterruptNotPendingException`。保存先は結果整合なので、ブラウザは短い間をあけて 1 回だけやり直してよい）。保留中の interrupt があるときの `agentStream` も 409 `InterruptsPendingException` です。`runQuery`、`addLayer`、`setLayerStyle` の結果は、Agent ブロックが untrusted のデータとして包みます。`<map_state>` の JSON は `<` を `\u003c` にし、発言の中の `<map_state` は全角の `＜` に置き換えます。上限は `shared/config.ts` の `agentConfig`、`mapConfig`、`resultConfig` です。開発サーバーは RPC の引数をそのまま標準出力に出すので、開発ログに発言やクエリ結果が残ります。
 
 ### 管理者の一覧
 
@@ -214,7 +230,7 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 
 1. 開発サーバーが動いていなければ、`npm run seed:users` でユーザーと一覧を投入する（冪等）。
 2. 開発サーバーを `AGENT_LOCAL_MODEL=canned` で起動する。
-3. 型付きクライアントで、サインアップなどの手作りの呼び出しが拒否されること（アカウントが作られず、セッションも変わらないこと）と、公開される名前空間が `api` と `authApi` だけであること、投入済みのユーザーのサインイン、サインアウトを確かめる。未サインインの呼び出しと、不許可のユーザーの呼び出しが、`api` のすべてのメソッドで拒否されること、許可のユーザーと管理者が `getAppInfo` の答えを得ることも確かめる。データセットでは、署名付きのダウンロード URL と、アップロード URL が管理者だけに出ることに加えて、アップロードの往復と `Content-Type` の拒否も確かめる。この 2 つは、ローカルのバケットの 1 つのオブジェクトを一度置き換えて元に戻す（上の「E2E テストが書き換えるオブジェクト」）。`data/dist/` は要らない。終わると、起動した開発サーバーを止める。
+3. 型付きクライアントで、サインアップなどの手作りの呼び出しが拒否されること（アカウントが作られず、セッションも変わらないこと）と、公開される名前空間が `api` と `authApi` だけであること、投入済みのユーザーのサインイン、サインアウトを確かめる。未サインインの呼び出しと、不許可のユーザーの呼び出しが、`api` のすべてのメソッドで拒否されること、許可のユーザーと管理者が `getAppInfo` の答えを得ることも確かめる。データセットでは、署名付きのダウンロード URL と、アップロード URL が管理者だけに出ることに加えて、アップロードの往復と `Content-Type` の拒否も確かめる。この 2 つは、ローカルのバケットの 1 つのオブジェクトを一度置き換えて元に戻す（上の「E2E テストが書き換えるオブジェクト」）。`data/dist/` は要らない。会話の API は、`canned` のモデルで、ツール呼び出し、interrupt、再開、完了の往復と、他のユーザーの会話の 404、不正な ID と上限超えの 400 を確かめる（`canned` で起動したサーバーのときだけ往復を確かめる）。終わると、起動した開発サーバーを止める。
 
 型付きクライアントはメソッドを列挙できないので、テスト内の `apiArguments` に `api` のメソッドごとの引数を書きます。メソッドを足して `apiArguments` に足さないと、`npm run typecheck` が失敗します。
 
@@ -236,6 +252,8 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 | `aws-blocks/index.ts` | バックエンド: `authApi`（サインインとサインアウトだけ）と `api`（アプリの API。各メソッドの先頭で `requireAllowedUser`） |
 | `aws-blocks/access.ts` | 利用許可と管理者の一覧（`AppSetting`）と `requireAllowedUser`、`requireAdmin` |
 | `aws-blocks/datasets.ts` | データのバケット（`FileBucket`）と署名付き URL の発行 |
+| `aws-blocks/agent.ts`、`agent-tools.ts`、`agent-canned.ts` | Agent ブロックと 6 つのツールの処理、`canned` モデル用の入力（ツールの処理と入力は Building Block を作らない関数。単体テストあり） |
+| `aws-blocks/conversation.ts`、`conversation-input.ts`、`conversation-access.ts`、`conversation-owners.ts` | 会話の API、引数の検査、所有者の確認（後ろ 2 つは単体テストあり） |
 | `aws-blocks/user-list.ts`、`llm-mode.ts` | 一覧の解析と `AGENT_LOCAL_MODEL` の解析（Building Block を作らない関数。単体テストあり） |
 | `aws-blocks/auth.ts` | `AuthBasic` のインスタンス。`signUp` を公開する `auth.createApi()` / `auth.buildApi()` の戻り値はどこからも export しない |
 | `aws-blocks/scope.ts` | `Scope`（`ai-webmap`）。ローカルの保存先 `.bb-data/` のディレクトリ名の元 |

@@ -29,6 +29,7 @@ export const toolErrorCodeSchema = z.enum([
   'UNKNOWN_COLUMN',
   'UNKNOWN_LAYER',
   'INVALID_STYLE',
+  'INVALID_INPUT',
   'ENGINE_UNAVAILABLE',
   'SESSION_RESET'
 ]);

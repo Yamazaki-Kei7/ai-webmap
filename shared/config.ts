@@ -7,7 +7,12 @@ export const modelConfig = {
 export const agentConfig = {
   maxLlmCalls: 24,
   maxToolIterations: 24,
-  maxUtteranceChars: 2_000
+  /** Longest user message, in characters (Unicode code points: an emoji counts as one). */
+  maxUtteranceChars: 2_000,
+  /** Most interrupt answers one `agentResume` call carries (parallel tool calls arrive together). */
+  maxInterruptResponses: 16,
+  /** Longest interrupt id (characters) an answer may name. */
+  maxInterruptIdChars: 256
 } as const;
 
 export const queryConfig = {

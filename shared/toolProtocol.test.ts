@@ -47,7 +47,7 @@ describe('toolError', () => {
 
 describe('toolErrorCodeSchema', () => {
   it('lists the eleven codes of the protocol', () => {
-    expect(toolErrorCodeSchema.options).toHaveLength(11);
+    expect(toolErrorCodeSchema.options).toHaveLength(12);
     expect(toolErrorCodeSchema.safeParse('NOPE').success).toBe(false);
   });
 });
