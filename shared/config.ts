@@ -47,6 +47,13 @@ export const engineConfig = {
    * can be retried. Well above the measured ~2 s (worst of the spike 5.4 s): it also covers a 34 MB wasm on a slow line.
    */
   initTimeoutMs: 30_000,
+  /**
+   * A data file's fetch (the response and its body) that is not done by then is aborted, and the next query fetches
+   * it again. It caps the whole fetch, not a stall: a fetch that is still making progress is aborted too. Not
+   * `queryConfig.timeoutMs`: a large file on a slow line may rightly take longer than one query, and would then be
+   * aborted on every try. The data files are about 2 MB or less, so in practice only a fetch that hangs reaches it.
+   */
+  dataFetchTimeoutMs: 120_000,
   /** Longest error text (characters) the engine reports to the UI. */
   maxErrorChars: 200
 } as const;

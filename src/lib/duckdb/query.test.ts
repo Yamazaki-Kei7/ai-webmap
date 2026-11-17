@@ -75,10 +75,21 @@ function setup(handler: Handler, extra: { connections?: FakeConnection[]; ensure
     }
     return promise;
   };
+  // As the engine's `whenEnded`: the waits that are neither cancelled nor resolved by the end of their session.
+  const waiters = new Map<FakeConnection, Set<object>>();
   const endSession = (target: FakeConnection): void => {
     void endPromiseOf(target);
+    waiters.delete(target);
     ends.get(target)?.();
   };
+  const sessionEnded = vi.fn((target: FakeConnection) => {
+    const waiter = {};
+    const open = waiters.get(target) ?? new Set<object>();
+    open.add(waiter);
+    waiters.set(target, open);
+    return { ended: endPromiseOf(target), cancel: () => waiters.get(target)?.delete(waiter) };
+  });
+  const openWaiters = (): number => [...waiters.values()].reduce((count, open) => count + open.size, 0);
   const calls: string[] = [];
   const restartedWith: FakeConnection[] = [];
   const ensureViews = vi.fn(extra.ensureViews ?? (async () => undefined));
@@ -93,7 +104,7 @@ function setup(handler: Handler, extra: { connections?: FakeConnection[]; ensure
       calls.push('ensureViews');
       await ensureViews(ids);
     },
-    sessionEnded: (target) => ({ ended: endPromiseOf(target), cancel: () => undefined }),
+    sessionEnded,
     restart: async (stuck) => {
       calls.push('restart');
       restartedWith.push(stuck);
@@ -110,7 +121,19 @@ function setup(handler: Handler, extra: { connections?: FakeConnection[]; ensure
     geometryTypeOf: extra.geometryTypeOf ?? (() => 'point'),
     timeouts: { timeoutMs: queryConfig.timeoutMs, cancelGraceMs: queryConfig.cancelGraceMs }
   });
-  return { queries, connection, connections, ensureViews, restart, restartedWith, calls, endSession, use: (index: number) => (current = index) };
+  return {
+    queries,
+    connection,
+    connections,
+    ensureViews,
+    restart,
+    restartedWith,
+    calls,
+    endSession,
+    sessionEnded,
+    openWaiters,
+    use: (index: number) => (current = index)
+  };
 }
 
 describe('the guard', () => {
@@ -774,6 +797,92 @@ describe('late registrations belong to their session', () => {
     expect(requested).toEqual([first]);
     expect(fresh.sent).toEqual([]);
     expect(old.sent).toEqual([]);
+  });
+});
+
+describe('each defence of the late registrations on its own', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not wait for a late registration of another connection, even before the end of its session is announced', async () => {
+    const old = fakeConnection(() => 'hang');
+    const fresh = fakeConnection(layerHandler([['a', geomPoint(1, 2)]]));
+    const [, second] = datasetIds;
+    let calls = 0;
+    const { queries, use } = setup(() => 'hang', {
+      connections: [old, fresh],
+      ensureViews: () => (++calls === 1 ? new Promise<void>(() => undefined) : Promise.resolve())
+    });
+    const hung = queries.queryLayer(`SELECT * FROM ${first}`);
+    await vi.advanceTimersByTimeAsync(queryConfig.timeoutMs);
+    expect(await hung).toMatchObject({ ok: false, error: { code: 'TIMEOUT' } });
+    // The connection changed, but the old session's end has not been announced: only the keying keeps them apart.
+    use(1);
+    const result = queries.queryLayer(`SELECT * FROM ${second}`);
+    await vi.advanceTimersByTimeAsync(queryConfig.timeoutMs);
+    expect(await result).toMatchObject({ ok: true });
+  });
+
+  it('sends nothing for a job whose session ended during its registration, once the registration finishes', async () => {
+    // The connection stays the engine's: only the check before each statement stops the abandoned job.
+    const connection = fakeConnection(layerHandler([['a', geomPoint(1, 2)]]));
+    let finish: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const { queries, endSession } = setup(() => 'hang', { connections: [connection], ensureViews: () => gate });
+    const result = queries.queryLayer(`SELECT * FROM ${first}`);
+    await vi.advanceTimersByTimeAsync(1000);
+    endSession(connection);
+    expect(await result).toMatchObject({ ok: false, error: { code: 'SESSION_RESET' } });
+    finish();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(connection.sent).toEqual([]);
+  });
+
+  it('leaves no watch on the session behind once a query is done', async () => {
+    const { queries, sessionEnded, openWaiters } = setup(layerHandler([['a', geomPoint(1, 2)]]));
+    expect(await queries.queryLayer(`SELECT * FROM ${first}`)).toMatchObject({ ok: true });
+    expect(sessionEnded).toHaveBeenCalled();
+    expect(openWaiters()).toBe(0);
+  });
+
+  it('stops watching the session and forgets the connection once its last late registration settles', async () => {
+    const connection = fakeConnection(layerHandler([['a', geomPoint(1, 2)]]));
+    const gates: (() => void)[] = [];
+    let calls = 0;
+    const { queries, openWaiters } = setup(() => 'hang', {
+      connections: [connection],
+      ensureViews: () =>
+        ++calls > 2
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => {
+              gates.push(resolve);
+            })
+    });
+    const a = queries.queryLayer(`SELECT * FROM ${first}`);
+    await vi.advanceTimersByTimeAsync(queryConfig.timeoutMs);
+    expect(await a).toMatchObject({ ok: false, error: { code: 'TIMEOUT' } });
+    // The late registration watches the end of its session.
+    expect(openWaiters()).toBe(1);
+    gates[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(openWaiters()).toBe(0);
+
+    // The next late registration on the same connection makes a new entry with a new watch (an entry kept from before
+    // would take it in without one).
+    const b = queries.queryLayer(`SELECT * FROM ${first}`);
+    await vi.advanceTimersByTimeAsync(queryConfig.timeoutMs);
+    expect(await b).toMatchObject({ ok: false, error: { code: 'TIMEOUT' } });
+    expect(openWaiters()).toBe(1);
+    gates[1]();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(openWaiters()).toBe(0);
+    expect(await queries.queryLayer(`SELECT * FROM ${first}`)).toMatchObject({ ok: true });
   });
 });
 

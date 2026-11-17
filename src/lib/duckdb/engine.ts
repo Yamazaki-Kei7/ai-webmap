@@ -5,6 +5,7 @@ import { catalog } from '../../../shared/catalog';
 import { datasetIds } from '../../../shared/datasets';
 import { queryConfig } from '../../../shared/config';
 import { validateSql } from '../../../shared/sqlGuard';
+import { withDataFetchTimeout } from './dataFetch';
 import { createDuckSession, firstValue } from './duckSession';
 import { createEngine, type EngineStatus } from './engineCore';
 import { createQueries } from './query';
@@ -30,8 +31,9 @@ const engine = createEngine({
   now: () => Date.now(),
   fetchSources: () => api.getDatasetSources(),
   createSession: async () => startDuckSession(),
-  // Signed GET URLs answer HEAD with 403, so DuckDB's range reading cannot be used: whole files only.
-  fetchFile: (url) => fetch(url),
+  // Signed GET URLs answer HEAD with 403, so DuckDB's range reading cannot be used: whole files only. (The wasm fetch
+  // above needs no abort of its own: the initialisation timeout covers it.)
+  fetchFile: withDataFetchTimeout((url, init) => fetch(url, init)),
   log: (message) => console.info(message)
 });
 

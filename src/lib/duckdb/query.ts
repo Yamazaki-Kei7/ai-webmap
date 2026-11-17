@@ -119,6 +119,9 @@ type Deadline = { at: number; ms: number; passed: boolean };
 
 type Settled<T> = { settled: true; value: T } | { settled: false };
 
+/** The late registrations of one connection, and the watch on the end of its session. */
+type LateViews = { pending: Set<Promise<FailedResult | undefined>>; end: { ended: Promise<void>; cancel: () => void } };
+
 /** The value of the promise, or `settled: false` when `ms` pass first. The timer is always cleared. */
 async function raceTimer<T>(promise: Promise<T>, ms: number): Promise<Settled<T>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -137,7 +140,7 @@ export function createQueries<Connection extends SqlConnection>(deps: QueryDeps<
   let tail: Promise<void> = Promise.resolve();
   // Registrations that ran past their query's deadline and go on in the background, per connection (a session's own:
   // a hung fetch of a session that is over must not touch the next one). Dropped when the session ends.
-  const lateViews = new Map<Connection, Set<Promise<FailedResult | undefined>>>();
+  const lateViews = new Map<Connection, LateViews>();
 
   /** Jobs run one after another (the connection takes one statement at a time); a job never rejects. */
   function enqueue<T>(job: () => Promise<T>): Promise<T> {
@@ -176,21 +179,29 @@ export function createQueries<Connection extends SqlConnection>(deps: QueryDeps<
     );
     const loaded = await raceTimer(loading, Math.max(0, deadline.at - Date.now()));
     if (loaded.settled) return loaded.value;
-    let pending = lateViews.get(connection);
-    if (pending === undefined) {
-      const created = new Set<Promise<FailedResult | undefined>>();
-      pending = created;
-      lateViews.set(connection, created);
-      const end = deps.sessionEnded(connection);
-      void end.ended.then(() => lateViews.delete(connection));
-      void loading.then(() => {
-        // Nothing late is left on this connection: stop watching it.
-        if (created.size === 0) end.cancel();
-      });
-    }
-    pending.add(loading);
-    void loading.then(() => pending.delete(loading));
+    const late = lateViews.get(connection) ?? watchLateViews(connection);
+    late.pending.add(loading);
+    void loading.then(() => {
+      late.pending.delete(loading);
+      if (late.pending.size > 0) return;
+      // Nothing late is left on this connection: forget it and stop watching its session. The next late registration
+      // makes a new entry with a new watch.
+      if (lateViews.get(connection) === late) lateViews.delete(connection);
+      late.end.cancel();
+    });
     return timeoutError(deadline.ms);
+  }
+
+  /** A new entry of late registrations for this connection, dropped when its session ends. */
+  function watchLateViews(connection: Connection): LateViews {
+    const late: LateViews = { pending: new Set(), end: deps.sessionEnded(connection) };
+    lateViews.set(connection, late);
+    // Only memory is at stake in this drop (no job reads another connection's entry), so no test can see it: it frees
+    // a registration that never settles (a call to a worker that was terminated).
+    void late.end.ended.then(() => {
+      if (lateViews.get(connection) === late) lateViews.delete(connection);
+    });
+    return late;
   }
 
   /**
@@ -201,7 +212,7 @@ export function createQueries<Connection extends SqlConnection>(deps: QueryDeps<
    * to send: that needs the registry, so the wait is for the whole connection.
    */
   async function lateViewsDone(connection: Connection, deadline: Deadline): Promise<FailedResult | undefined> {
-    const pending = lateViews.get(connection);
+    const pending = lateViews.get(connection)?.pending;
     if (pending === undefined || pending.size === 0) return undefined;
     const done = await raceTimer(Promise.all([...pending]), Math.max(0, deadline.at - Date.now()));
     return done.settled ? undefined : timeoutError(deadline.ms);

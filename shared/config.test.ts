@@ -30,12 +30,17 @@ describe('config invariants', () => {
       urlConfig.refreshMarginSeconds,
       engineConfig.threads,
       engineConfig.initTimeoutMs,
+      engineConfig.dataFetchTimeoutMs,
       engineConfig.maxErrorChars,
       agentConfig.maxLlmCalls,
       agentConfig.maxToolIterations,
       agentConfig.maxUtteranceChars
     ];
     for (const value of numbers) expect(value).toBeGreaterThan(0);
+  });
+
+  it('gives a data fetch longer than one query, so a slow file is not aborted on every try', () => {
+    expect(engineConfig.dataFetchTimeoutMs).toBeGreaterThan(queryConfig.timeoutMs);
   });
 
   it('refreshes the signed URLs before they expire', () => {
