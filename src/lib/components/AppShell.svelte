@@ -13,15 +13,19 @@
   import DevToolBox from './DevToolBox.svelte';
   import LayerPanel from './LayerPanel.svelte';
   import MapView from './MapView.svelte';
+  import TempChatBox from './TempChatBox.svelte';
   import { narrowViewport } from './narrowViewport';
 
   let {
     title,
+    owner,
     engineStatus,
     setStatus,
     map = $bindable()
   }: {
     title: string;
+    /** The signed-in user's name (the chat is kept per user). */
+    owner: string | null;
     engineStatus: EngineStatus;
     setStatus: (next: EngineStatus) => void;
     map?: MaplibreMap;
@@ -97,7 +101,7 @@
       </div>
     </div>
 
-    <!-- Phase 4 puts the chat here. -->
+    <!-- The chat panel (Task 4.6) replaces the temporary chat box in this dock. -->
     <aside
       class={[
         'flex flex-col border-bb-border bg-bb-surface shadow',
@@ -115,9 +119,10 @@
         <span>チャット</span>
         <span aria-hidden="true">{dockOpen ? '▾' : '▸'}</span>
       </button>
-      {#if dockOpen}
-        <p class="border-t border-bb-border p-3 text-sm text-bb-muted">チャット（準備中）</p>
-      {/if}
+      <!-- Hidden, not removed, when closed: the conversation lives in the chat box. -->
+      <div class={dockOpen ? '' : 'hidden'}>
+        <TempChatBox ready={engineStatus.state === 'ready'} {map} {owner} />
+      </div>
     </aside>
   </div>
 </div>

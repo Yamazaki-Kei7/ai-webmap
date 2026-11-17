@@ -225,11 +225,12 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     }
   };
 
-  // One call at a time, in the order received (the model's order): layer ids, replaces and the view read back depend on the calls before. `execute` never rejects, so a failed call does not block the next.
+  // One call at a time, in the order received (the model's order): layer ids, replaces and the view read back depend on the calls before. `execute` never rejects; if it did, the chain would still go on (the rejection reaches only the caller).
   let previous: Promise<void> = Promise.resolve();
+  const noop = (): void => undefined;
   return (request) => {
     const result = previous.then(() => execute(request));
-    previous = result.then(() => undefined);
+    previous = result.then(noop, noop);
     return result;
   };
 }

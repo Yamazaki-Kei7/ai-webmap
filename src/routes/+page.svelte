@@ -42,7 +42,7 @@
 </svelte:head>
 
 {#if user}
-  <AppShell title={appTitle} {engineStatus} {setStatus} bind:map />
+  <AppShell title={appTitle} {owner} {engineStatus} {setStatus} bind:map />
 {:else}
   <!-- The server offers sign-in only; accounts are created by the operator. -->
   <div class="mx-auto my-10 max-w-4xl p-5">

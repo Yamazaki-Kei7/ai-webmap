@@ -23,7 +23,8 @@ export function conversationMethods(context: BlocksContext) {
     async agentCreateConversationId(): Promise<{ conversationId: string }> {
       const { username } = await requireAllowedUser(context);
       const conversationId = await agent.createConversationId(username);
-      await conversationOwners.put(conversationId, username);
+      // A fresh id: an existing record (a clash, which a random id does not make) must never be overwritten with another owner.
+      await conversationOwners.put(conversationId, username, { ifNotExists: true });
       return { conversationId };
     },
 

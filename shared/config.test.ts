@@ -3,6 +3,7 @@ import type { LngLatLike } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
 import {
   agentConfig,
+  chatConfig,
   dataConfig,
   engineConfig,
   mapConfig,
@@ -122,6 +123,15 @@ describe('config invariants', () => {
       mapConfig.summaryShrunkCategories
     ];
     for (const cap of caps) expect(cap).toBeGreaterThan(0);
+  });
+
+  it('retries the conversation API after increasing, positive waits', () => {
+    const delays = chatConfig.retryDelaysMs;
+    expect(delays.length).toBeGreaterThan(0);
+    delays.forEach((delay, index) => {
+      expect(delay).toBeGreaterThan(0);
+      if (index > 0) expect(delay).toBeGreaterThan(delays[index - 1]);
+    });
   });
 
   it('draws a feature without a number smaller than the smallest proportional symbol', () => {

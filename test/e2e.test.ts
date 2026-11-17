@@ -696,6 +696,33 @@ test('agent: a full round trip through the canned model: tool calls, interrupts,
   });
 });
 
+// The canned model calls a tool when a word of its name is in the message (the word "Style" for `setLayerStyle`, and so on).
+// `setView` comes with each of them through the map context's `view` key.
+for (const { tool, message } of [
+  { tool: 'setLayerStyle', message: 'Style を変えて' },
+  { tool: 'setLayerLabel', message: 'Label を変えて' },
+  { tool: 'removeLayer', message: 'remove して' }
+] as const) {
+  test(`agent: the canned ${tool} call reaches the browser as an interrupt that parses as a request, and its answer completes the turn`, async (t) => {
+    if (!startedServer) return t.skip(cannedOnlyMessage);
+    await asRole('allowed', async () => {
+      const { conversationId } = await api.agentCreateConversationId();
+      const watcher = await watchChannel(conversationId);
+      try {
+        await api.agentStream(message, conversationId, sampleMapContext);
+        const interrupts = await nextInterrupts(watcher);
+        const tools = interrupts.map((interrupt) => requestOf(interrupt).tool);
+        assert.ok(tools.includes(tool), `expected a ${tool} interrupt (got ${tools.join(', ')})`);
+        await api.agentResume(conversationId, answersTo(interrupts));
+        await watcher.next((chunk) => chunk.type === 'done', 'waiting for done');
+      } finally {
+        watcher.stop();
+      }
+      assert.ok((await toolResults(conversationId)).some((result) => result.toolName === tool), `expected a ${tool} result`);
+    });
+  });
+}
+
 test('agent: a forged, repeated or already answered interrupt id is a 409 that starts nothing', async (t) => {
   if (!startedServer) return t.skip(cannedOnlyMessage);
   await asRole('allowed', async () => {

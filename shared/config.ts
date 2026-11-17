@@ -1,5 +1,7 @@
 /** Application settings shared by the frontend and the backend (design 9.2). */
 
+import { conversationErrors } from './conversation';
+
 export const modelConfig = {
   modelId: 'jp.anthropic.claude-haiku-5-5'
 } as const;
@@ -197,6 +199,57 @@ export const legendConfig = {
     details: '詳細',
     /** Most height (pixels) of the list of sources; it scrolls beyond. */
     maxListPx: 160
+  }
+} as const;
+
+const answerRefusedName = 'AnswerRefusedError';
+
+/** Shown for a failure by its error name (the server's names are in `shared/conversation.ts`); any other failure shows `errorGeneric`, never its own text. */
+const chatErrorTexts: Readonly<Record<string, string>> = {
+  [conversationErrors.InterruptsPending]: '前の操作結果がまだ届いていません。少し待つか、「新しい会話」からやり直してください。',
+  [conversationErrors.InterruptNotPending]: '地図の操作結果をサーバーが受け付けませんでした。「新しい会話」からやり直してください。',
+  [conversationErrors.NotFound]: '会話が見つかりません。「新しい会話」からやり直してください。',
+  [conversationErrors.InvalidRequest]: '送れない内容です（長すぎるなど）。短くして送り直してください。',
+  [answerRefusedName]: '地図の操作結果をサーバーが受け付けませんでした。「新しい会話」からやり直してください。',
+  TypeError: '通信できませんでした。接続を確かめて、もう一度送ってください。',
+  ModelUnavailableException: 'モデルを使えません。しばらくしてからやり直してください。'
+};
+
+/** The chat session (`src/lib/chat/chatSession.svelte.ts`) and its temporary panel. */
+export const chatConfig = {
+  /**
+   * The store behind the conversation API is eventually consistent: a call that names an interrupt, or a conversation made a
+   * moment ago, may be refused (409 / 404) until it has caught up. The call is made again after each of these waits (milliseconds),
+   * one more time after the last, and then its error is given up.
+   */
+  retryDelaysMs: [300, 700, 1_500],
+  /** The conversation the tab is in, kept in `sessionStorage` (owner and id) so that a reload can answer what it left pending. */
+  storageKey: 'ai-webmap.chat',
+  /** Names of the errors the session raises itself (`text.errors` has their messages). */
+  errorNames: { answerRefused: answerRefusedName },
+  text: {
+    inputLabel: 'メッセージ',
+    inputPlaceholder: '地図についてたずねる（例: 学校を種別で色分けして）',
+    send: '送信',
+    reset: '新しい会話',
+    engineNotReady: 'データエンジンの準備ができるまで送信できません。',
+    working: '処理中…（完了するまで送信できません）',
+    /** What each tool is doing, then `activityRunning` / `activityDone` / `activityFailed`. */
+    activity: {
+      runQuery: 'クエリ実行',
+      addLayer: 'レイヤー追加',
+      setLayerStyle: 'スタイル変更',
+      setLayerLabel: 'ラベル変更',
+      removeLayer: 'レイヤー削除',
+      setView: '表示範囲の移動'
+    },
+    activityRunning: '中',
+    activityDone: '完了',
+    activityFailed: '失敗',
+    /** The answer to a resumed turn could not be handed to the chat. */
+    answerNotSent: '地図の操作結果を送れませんでした。「新しい会話」からやり直してください。',
+    errors: chatErrorTexts,
+    errorGeneric: 'エラーが起きました。「新しい会話」からやり直してください。'
   }
 } as const;
 
