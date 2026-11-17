@@ -8,6 +8,7 @@ import {
   mapConfig,
   queryConfig,
   resultConfig,
+  styleConfig,
   urlConfig
 } from './config';
 
@@ -51,6 +52,21 @@ describe('config invariants', () => {
     const { defaultClasses, minClasses, maxClasses } = dataConfig.classification;
     expect(minClasses).toBeLessThanOrEqual(defaultClasses);
     expect(defaultClasses).toBeLessThanOrEqual(maxClasses);
+  });
+
+  it('keeps the style defaults inside their bounds', () => {
+    const { defaults, opacity } = styleConfig;
+    expect(defaults.opacity).toBeGreaterThanOrEqual(opacity.min);
+    expect(defaults.opacity).toBeLessThanOrEqual(opacity.max);
+    expect(defaults.strokeWidth).toBeLessThanOrEqual(styleConfig.maxStrokeWidth);
+    expect(defaults.size.point).toBeLessThanOrEqual(styleConfig.maxSize);
+    expect(defaults.size.line).toBeLessThanOrEqual(styleConfig.maxSize);
+    expect(defaults.minRadius).toBeGreaterThan(0);
+    expect(defaults.minRadius).toBeLessThan(defaults.maxRadius);
+    expect(defaults.maxRadius).toBeLessThanOrEqual(styleConfig.maxRadius);
+    expect(styleConfig.zoom.min).toBeLessThan(styleConfig.zoom.max);
+    expect(styleConfig.noDataColor).not.toBe(styleConfig.otherColor);
+    for (const color of [defaults.strokeColor, styleConfig.otherColor, styleConfig.noDataColor]) expect(color).toMatch(/^#[0-9a-f]{6}$/i);
   });
 
   it('matches the DuckDB-WASM version pinned in package.json', () => {

@@ -86,6 +86,45 @@ export const dataConfig = {
   }
 } as const;
 
+/** Limits and defaults of the layer styles and labels the model sets (`shared/mapSpec.ts`, resolved in `src/lib/map/styleCompiler.ts`). */
+export const styleConfig = {
+  /** Longest column name (characters) a style or label may name. */
+  maxColumnChars: 128,
+  /** Longest layer id (characters) a view target may name. */
+  maxLayerIdChars: 64,
+  /** Longest category value (characters) an `overrides` key may name. */
+  maxCategoryValueChars: 200,
+  opacity: { min: 0, max: 1 },
+  /** Upper bounds (pixels) of the positive widths and sizes; the lower bound is above zero. */
+  maxStrokeWidth: 20,
+  /** Point radius and line width (pixels). */
+  maxSize: 50,
+  /** Upper bound (pixels) of a proportional symbol's `minRadius` and `maxRadius`. */
+  maxRadius: 100,
+  maxLabelSize: 48,
+  maxHaloWidth: 10,
+  /** The zoom levels of the basemap. */
+  zoom: { min: 0, max: 22 },
+  defaults: {
+    opacity: 0.7,
+    strokeColor: '#ffffff',
+    strokeWidth: 1,
+    /** Point radius and line width (pixels); a polygon has no `size`, its outline is `strokeWidth`. */
+    size: { point: 5, line: 2 },
+    categorizedPalette: 'set2',
+    graduatedPalette: 'ylorrd',
+    /** Radii (pixels) of the smallest and the largest proportional symbol. */
+    minRadius: 3,
+    maxRadius: 30
+  },
+  /** Colour of the categories folded into "other" (not of the features without a value: `noDataColor`). */
+  otherColor: '#9e9e9e',
+  /** Colour of the features without a value in the styled column; a light grey, apart from `otherColor`. */
+  noDataColor: '#d9d9d9',
+  /** Most column names listed in the hint of an unknown-column error. */
+  maxHintColumns: 20
+} as const;
+
 const initialCenter: [number, number] = [137.0, 38.0];
 
 export const mapConfig = {
