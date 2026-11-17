@@ -23,6 +23,7 @@ describe('config invariants', () => {
       queryConfig.timeoutMs,
       queryConfig.cancelGraceMs,
       queryConfig.maxRows,
+      queryConfig.maxSqlChars,
       queryConfig.maxFeaturesPerLayer,
       urlConfig.signedUrlTtlSeconds,
       agentConfig.maxLlmCalls,

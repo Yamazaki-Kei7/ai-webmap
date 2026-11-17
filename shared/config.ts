@@ -16,7 +16,9 @@ export const queryConfig = {
   /** After `cancelSent()`, wait this long before `worker.terminate()`. */
   cancelGraceMs: 5_000,
   /** Maximum rows returned by `runQuery`. */
-  maxRows: 50
+  maxRows: 50,
+  /** Longest SQL text (characters) the SQL guard accepts. */
+  maxSqlChars: 10_000
 } as const;
 
 export const resultConfig = {

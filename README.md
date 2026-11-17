@@ -231,7 +231,7 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 | `aws-blocks/user-list.ts`、`llm-mode.ts` | 一覧の解析と `AGENT_LOCAL_MODEL` の解析（Building Block を作らない関数。単体テストあり） |
 | `aws-blocks/auth.ts` | `AuthBasic` のインスタンス。`signUp` を公開する `auth.createApi()` / `auth.buildApi()` の戻り値はどこからも export しない |
 | `aws-blocks/scope.ts` | `Scope`（`ai-webmap`）。ローカルの保存先 `.bb-data/` のディレクトリ名の元 |
-| `shared/` | フロントエンドとバックエンドが共有する設定（`config.ts`）、エラー名（`access.ts`）、データのファイル名（`datasets.ts`） |
+| `shared/` | フロントエンドとバックエンドが共有する設定（`config.ts`）、エラー名（`access.ts`）、データのファイル名（`datasets.ts`）、LLM が書いた SQL の検査（`sqlGuard.ts`、許可する関数の一覧 `sqlFunctions.ts`） |
 | `aws-blocks/password-policy.ts` | パスワードの規則（`auth.ts` と、`scripts/admin/` が共有する 1 か所） |
 | `scripts/seed/` | ユーザー作成スクリプトと、資格情報の読み込み |
 | `scripts/admin/` | デプロイ先のユーザーを作る運用者用コマンド（`create-user.ts`）。レコードの組み立て（`user-record.ts`）、変数名（`admin-env.ts`）、単体テストあり |
