@@ -783,8 +783,11 @@ test('agent: an answer that is not a valid result still completes the turn (a to
 // `aws-blocks/agent-tools.test.ts`: the canned model gives each tool one fixed, valid input (`aws-blocks/agent-canned.ts`),
 // so a rejected SQL cannot be arranged through the running server.
 
+/** What the calls below answer (they are awaited for their refusal, and the answer is dropped). */
+type ApiResult = object | void;
+
 /** The calls of the conversation API for an id, each with arguments that would pass validation. */
-const conversationCalls: { [name: string]: (conversationId: string) => Promise<unknown> } = {
+const conversationCalls: { [name: string]: (conversationId: string) => Promise<ApiResult> } = {
   agentGetChannel: (id) => api.agentGetChannel(id),
   agentStream: (id) => api.agentStream('runQuery', id, sampleMapContext),
   agentResume: (id) => api.agentResume(id, [{ interruptId: 'x', response: '{}' }]),
@@ -840,7 +843,7 @@ test('agent: arguments over their limits are rejected with 400 and start nothing
     const { conversationId } = await api.agentCreateConversationId();
     const layers = Array.from({ length: mapConfig.summaryMaxBytes / 10 }, (_, n) => ({ id: `L${n}`, name: 'name' }));
     const tooManyBytes = (size: number): string => 'a'.repeat(size);
-    const oversize: { what: string; call: () => Promise<unknown> }[] = [
+    const oversize: { what: string; call: () => Promise<ApiResult> }[] = [
       { what: 'an empty message', call: () => api.agentStream('', conversationId, sampleMapContext) },
       { what: 'a blank message', call: () => api.agentStream('  \n ', conversationId, sampleMapContext) },
       { what: 'a message over the limit', call: () => api.agentStream('a'.repeat(agentConfig.maxUtteranceChars + 1), conversationId, sampleMapContext) },

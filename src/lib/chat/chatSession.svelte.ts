@@ -8,6 +8,7 @@ import {
   fitToolResults,
   toolError,
   type ClientToolResult,
+  type ToolErrorCode,
   type ToolName,
   type ToolResultData
 } from '../../../shared/toolProtocol';
@@ -24,7 +25,8 @@ import type { ToolExecutor } from './toolExecutor';
 /** A message of the conversation as the panel shows it (no tool, interrupt or approval rows). */
 export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string };
 
-export type ToolActivity = { id: string; tool: ToolName; state: 'running' | 'done' | 'failed' };
+/** `code` is why a failed call failed (the code of the result the model is given). */
+export type ToolActivity = { id: string; tool: ToolName; state: 'running' | 'done' | 'failed'; code?: ToolErrorCode };
 
 export interface ChatSession {
   readonly messages: ChatMessage[];
@@ -243,11 +245,13 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     return settled;
   }
 
-  function track(conversation: Conversation, id: string, tool: ToolName, state: ToolActivity['state']): void {
+  function track(conversation: Conversation, id: string, tool: ToolName, state: ToolActivity['state'], code?: ToolErrorCode): void {
     if (conversation.discarded) return;
     const known = activity.find((entry) => entry.id === id);
-    if (known) known.state = state;
-    else activity.push({ id, tool, state });
+    if (known) {
+      known.state = state;
+      known.code = code;
+    } else activity.push({ id, tool, state, code });
   }
 
   /** The tool call of one interrupt, answered as the result the model reads. */
@@ -258,10 +262,10 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     track(conversation, interruptId, request.data.tool, 'running');
     try {
       const result = await executor(request.data);
-      track(conversation, interruptId, request.data.tool, result.ok ? 'done' : 'failed');
+      track(conversation, interruptId, request.data.tool, result.ok ? 'done' : 'failed', result.ok ? undefined : result.error.code);
       return result;
     } catch {
-      track(conversation, interruptId, request.data.tool, 'failed');
+      track(conversation, interruptId, request.data.tool, 'failed', 'ENGINE_UNAVAILABLE');
       return toolError('ENGINE_UNAVAILABLE', 'The tool stopped unexpectedly.');
     }
   }
@@ -285,8 +289,8 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
       conversation.handling.delete(interruptId);
       conversation.answered.add(interruptId);
     }
-    // Disposed while the calls ran: the subscriptions are closed, nothing more is sent.
-    if (disposed) return;
+    // Disposed, or the conversation closed (a reset ended its turn), while the calls ran: its subscriptions are closed, nothing more is sent.
+    if (disposed || !conversations.has(conversation)) return;
     const accepted = await conversation.chat.sendMessage({ interruptResponses: responses });
     if (!accepted) endTurn(conversation, chatConfig.text.answerNotSent);
   }

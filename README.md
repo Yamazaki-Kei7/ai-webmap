@@ -33,7 +33,7 @@ npm run dev            # http://localhost:3000 （フロントエンドは内部
 
 ### 開発用の SQL ボックス
 
-開発サーバー（`npm run dev`）では、サインインしてデータエンジンの準備ができると、画面左のパネルに SQL ボックスが出ます。`geom` 列を返す SQL を入れて「追加」を押すと、結果がレイヤーとして地図に載ります（失敗は `コード: メッセージ` で表示）。チャットができるまでの手動確認用で、本番ビルド（`npm run build`）には入りません。
+開発サーバー（`npm run dev`）では、サインインしてデータエンジンの準備ができると、画面左のパネルの「開発用」（初期は閉じています。以下の 3 つのボックスをまとめたもの）に SQL ボックスが出ます。`geom` 列を返す SQL を入れて「追加」を押すと、結果がレイヤーとして地図に載ります（失敗は `コード: メッセージ` で表示）。チャットができるまでの手動確認用で、本番ビルド（`npm run build`）には入りません。
 
 SQL ボックスの下にスタイルボックスもあります。レイヤーを選び、`StyleSpec`（例 `{"type":"graduated","column":"n","method":"quantile","classes":5,"palette":"ylorrd"}`）または `LabelSpec`（例 `{"column":"pref_name"}`）の JSON を入れて「スタイル適用」「ラベル適用」「ラベル解除」を押すと、地図の見た目が変わります（失敗は `コード: メッセージ` で表示）。これも本番ビルドには入りません。
 
@@ -277,7 +277,7 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 
 ### チャットのセッション
 
-右のドックに仮のチャット（`src/lib/components/TempChatBox.svelte`。のちのチャットパネルが置き換えます）があります。会話は `src/lib/chat/chatSession.svelte.ts` が動かします。Agent ブロックの `createChat` を Realtime のトランスポートで `agent*` の API につなぎ、モデルのツール呼び出し（interrupt）をブラウザの実行器で動かして、結果をまとめて 1 回で返します。ターンが終わる（`done` かエラー）まで送信できません。「新しい会話」を押すと、実行中のターンは捨てられ、その後のツール呼び出しには `SESSION_RESET` を返します。ストアの結果整合のための 409 / 404 は、`shared/config.ts` の `chatConfig.retryDelaysMs` の間隔で再試行します。ページを再読み込みすると会話は引き継がれません（古い会話の保留中の interrupt はサーバーに残ります）。
+右のドックにチャットパネル（`src/lib/components/ChatPanel.svelte`。メッセージは `ChatMessage.svelte`、ツールの実行状況は `ToolActivity.svelte`）があります。入力は Enter で送信、Shift+Enter で改行で、IME の変換確定の Enter では送りません。データエンジンの準備中は入力を止め、起動に失敗したときはパネルに再試行つきのバナーを出し、許可リストにないアカウントでは「このアカウントはデータを利用できません」と出してチャットを使えなくします。文言と値は `shared/config.ts` の `chatConfig` にあります。会話は `src/lib/chat/chatSession.svelte.ts` が動かします。Agent ブロックの `createChat` を Realtime のトランスポートで `agent*` の API につなぎ、モデルのツール呼び出し（interrupt）をブラウザの実行器で動かして、結果をまとめて 1 回で返します。ターンが終わる（`done` かエラー）まで送信できません。「新しい会話」を押すと、実行中のターンは捨てられ、その後のツール呼び出しには `SESSION_RESET` を返します。ストアの結果整合のための 409 / 404 は、`shared/config.ts` の `chatConfig.retryDelaysMs` の間隔で再試行します。ページを再読み込みすると会話は引き継がれません（古い会話の保留中の interrupt はサーバーに残ります）。
 
 ### データエンジン（DuckDB-WASM）
 

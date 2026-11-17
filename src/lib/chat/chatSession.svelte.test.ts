@@ -234,7 +234,22 @@ describe('createChatSession', () => {
     const session = makeSession(fake, executorReturning({ ok: false, error: { code: 'SQL_ERROR', message: 'no' } }));
     await sendAndStart(session, fake);
     fake.emit('conversation-1', interruptChunk(interruptOf('i1', runQueryRequest)));
-    await vi.waitFor(() => expect(session.activity).toEqual([{ id: 'i1', tool: 'runQuery', state: 'failed' }]));
+    await vi.waitFor(() => expect(session.activity).toEqual([{ id: 'i1', tool: 'runQuery', state: 'failed', code: 'SQL_ERROR' }]));
+    session.dispose();
+  });
+
+  it('keeps the error code of a failed call, and the code ENGINE_UNAVAILABLE when the executor itself fails', async () => {
+    const fake = fakeApi();
+    const executor = vi.fn<ToolExecutor>().mockResolvedValueOnce({ ok: false, error: { code: 'TIMEOUT', message: 'slow' } }).mockRejectedValueOnce(new Error('boom'));
+    const session = makeSession(fake, executor);
+    await sendAndStart(session, fake);
+    fake.emit('conversation-1', interruptChunk(interruptOf('i1', runQueryRequest), interruptOf('i2', setViewRequest)));
+    await vi.waitFor(() =>
+      expect(session.activity).toEqual([
+        { id: 'i1', tool: 'runQuery', state: 'failed', code: 'TIMEOUT' },
+        { id: 'i2', tool: 'setView', state: 'failed', code: 'ENGINE_UNAVAILABLE' }
+      ])
+    );
     session.dispose();
   });
 

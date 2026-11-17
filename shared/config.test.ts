@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { LngLatLike } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
+import { toolErrorCodeSchema } from './toolProtocol';
 import {
   agentConfig,
   chatConfig,
@@ -123,6 +124,11 @@ describe('config invariants', () => {
       mapConfig.summaryShrunkCategories
     ];
     for (const cap of caps) expect(cap).toBeGreaterThan(0);
+  });
+
+  it('has a Japanese reason for every tool error code, and nothing more', () => {
+    expect(Object.keys(chatConfig.text.toolErrorCodes).sort()).toEqual([...toolErrorCodeSchema.options].sort());
+    for (const reason of Object.values(chatConfig.text.toolErrorCodes)) expect(reason).not.toBe('');
   });
 
   it('retries the conversation API after increasing, positive waits', () => {

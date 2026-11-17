@@ -7,13 +7,12 @@
   import { restartEngine, type EngineStatus } from '$lib/duckdb/engine';
   import { runEngine } from '$lib/duckdb/engineEffect.svelte';
   import { isRetryableMessage } from '$lib/duckdb/errors';
+  import { chatConfig } from '../../../shared/config';
   import DataAttribution from './DataAttribution.svelte';
-  import DevSqlBox from './DevSqlBox.svelte';
-  import DevStyleBox from './DevStyleBox.svelte';
-  import DevToolBox from './DevToolBox.svelte';
+  import ChatPanel from './ChatPanel.svelte';
+  import DevPanel from './DevPanel.svelte';
   import LayerPanel from './LayerPanel.svelte';
   import MapView from './MapView.svelte';
-  import TempChatBox from './TempChatBox.svelte';
   import { narrowViewport } from './narrowViewport';
 
   let {
@@ -32,6 +31,8 @@
   } = $props();
 
   let dockOpen = $state(true);
+
+  const retryEngine = (): void => runEngine(restartEngine, setStatus);
 
   // MapLibre's own attribution sits at the bottom right (two lines when opened on a narrow map). Where it reaches under the left
   // column, the data attribution is lifted above it, so that the two never cover each other; elsewhere it stays at the bottom edge.
@@ -68,7 +69,7 @@
             type="button"
             class="ml-2 rounded border border-bb-border px-2 py-0.5"
             data-testid="engine-retry"
-            onclick={() => runEngine(restartEngine, setStatus)}
+            onclick={retryEngine}
           >
             再試行
           </button>
@@ -92,16 +93,13 @@
       >
         <LayerPanel>
           {#if import.meta.env.DEV}
-            <DevSqlBox ready={engineStatus.state === 'ready'} />
-            <DevStyleBox />
-            <DevToolBox ready={engineStatus.state === 'ready'} {map} />
+            <DevPanel ready={engineStatus.state === 'ready'} {map} />
           {/if}
         </LayerPanel>
         <DataAttribution />
       </div>
     </div>
 
-    <!-- The chat panel (Task 4.6) replaces the temporary chat box in this dock. -->
     <aside
       class={[
         'flex flex-col border-bb-border bg-bb-surface shadow',
@@ -116,12 +114,12 @@
         data-testid="chat-dock-toggle"
         onclick={() => (dockOpen = !dockOpen)}
       >
-        <span>チャット</span>
+        <span>{chatConfig.text.title}</span>
         <span aria-hidden="true">{dockOpen ? '▾' : '▸'}</span>
       </button>
-      <!-- Hidden, not removed, when closed: the conversation lives in the chat box. -->
+      <!-- Hidden, not removed, when closed: the conversation lives in the chat panel. -->
       <div class={dockOpen ? '' : 'hidden'}>
-        <TempChatBox ready={engineStatus.state === 'ready'} {map} {owner} />
+        <ChatPanel {engineStatus} {map} {owner} onRetry={retryEngine} />
       </div>
     </aside>
   </div>

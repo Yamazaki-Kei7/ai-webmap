@@ -11,7 +11,7 @@ function fakeOwners(owners: Record<string, string>) {
   return { get: vi.fn(async (conversationId: string) => owners[conversationId] ?? null) } satisfies ConversationOwners;
 }
 
-async function rejection(promise: Promise<unknown>): Promise<ApiError> {
+async function rejection<T>(promise: Promise<T>): Promise<ApiError> {
   try {
     await promise;
   } catch (error) {

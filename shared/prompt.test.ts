@@ -321,6 +321,15 @@ describe('prompt examples', () => {
   });
 });
 
+describe('buildSystemPrompt: answers', () => {
+  it('tells the model to summarise tool results in Japanese, never to paste them', () => {
+    const answers = prompt.slice(prompt.indexOf('## 答え方'));
+    expect(answers).toContain('ツールの結果');
+    expect(answers).toContain('<untrusted-data>');
+    expect(answers).toContain('そのまま答えに貼りません');
+  });
+});
+
 describe('buildSystemPrompt: size', () => {
   it('is under the configured bound', () => {
     expect(prompt.length).toBeLessThan(promptConfig.maxChars);

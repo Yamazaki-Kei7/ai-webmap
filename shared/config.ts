@@ -215,7 +215,7 @@ const chatErrorTexts: Readonly<Record<string, string>> = {
   ModelUnavailableException: 'モデルを使えません。しばらくしてからやり直してください。'
 };
 
-/** The chat session (`src/lib/chat/chatSession.svelte.ts`) and its temporary panel. */
+/** The chat session (`src/lib/chat/chatSession.svelte.ts`) and its panel (`src/lib/components/ChatPanel.svelte`). */
 export const chatConfig = {
   /**
    * The store behind the conversation API is eventually consistent: a call that names an interrupt, or a conversation made a
@@ -227,25 +227,57 @@ export const chatConfig = {
   storageKey: 'ai-webmap.chat',
   /** Names of the errors the session raises itself (`text.errors` has their messages). */
   errorNames: { answerRefused: answerRefusedName },
+  /** The message list follows the newest message while it is within this many pixels of the bottom; scrolled further up, it stays where the user put it. */
+  autoScrollThresholdPx: 24,
+  /** `KeyboardEvent.keyCode` of a key the IME is handling: some browsers report it, not `isComposing`, for the Enter that ends a composition. */
+  imeProcessKeyCode: 229,
   text: {
+    title: 'チャット',
     inputLabel: 'メッセージ',
     inputPlaceholder: '地図についてたずねる（例: 学校を種別で色分けして）',
     send: '送信',
     reset: '新しい会話',
-    engineNotReady: 'データエンジンの準備ができるまで送信できません。',
+    messagesLabel: '会話',
+    /** Shown before the first message of a conversation. */
+    emptyHint: '地図に出したいデータや見せ方を、ふだんの言葉で伝えてください。例:',
+    examples: ['学校を種別で色分けして表示して', '東京都の大学だけを地図に出して', '大阪府の学校を表示して'],
+    roleUser: 'あなた',
+    roleAssistant: 'アシスタント',
+    /** Why the input is disabled, by cause. */
+    engineLoading: 'データエンジンを準備しています',
+    engineFailed: 'データエンジンを起動できませんでした。',
+    engineRetry: '再試行',
+    notAllowed: 'このアカウントはデータを利用できません。管理者に連絡してください。',
     working: '処理中…（完了するまで送信できません）',
-    /** What each tool is doing, then `activityRunning` / `activityDone` / `activityFailed`. */
+    /** The tool calls of the current turn, by tool and state. */
     activity: {
-      runQuery: 'クエリ実行',
-      addLayer: 'レイヤー追加',
-      setLayerStyle: 'スタイル変更',
-      setLayerLabel: 'ラベル変更',
-      removeLayer: 'レイヤー削除',
-      setView: '表示範囲の移動'
+      runQuery: { running: 'クエリを実行中', done: 'クエリを実行しました', failed: 'クエリの実行に失敗しました' },
+      addLayer: { running: 'レイヤーを追加中', done: 'レイヤーを追加しました', failed: 'レイヤーの追加に失敗しました' },
+      setLayerStyle: { running: 'スタイルを変更中', done: 'スタイルを変更しました', failed: 'スタイルの変更に失敗しました' },
+      setLayerLabel: { running: 'ラベルを設定中', done: 'ラベルを設定しました', failed: 'ラベルの設定に失敗しました' },
+      removeLayer: { running: 'レイヤーを削除中', done: 'レイヤーを削除しました', failed: 'レイヤーの削除に失敗しました' },
+      setView: { running: '表示範囲を移動中', done: '表示範囲を移動しました', failed: '表示範囲の移動に失敗しました' }
     },
-    activityRunning: '中',
-    activityDone: '完了',
-    activityFailed: '失敗',
+    activityLabel: '実行中の操作',
+    /** The mark before an activity line, by state. */
+    activityMarks: { running: '…', done: '✓', failed: '✕' },
+    /** Why a tool call failed, in words (the line reads 「…に失敗しました（理由）」). */
+    toolErrorCodes: {
+      SQL_REJECTED: '許可されない SQL',
+      SQL_ERROR: 'SQL のエラー',
+      TIMEOUT: '時間切れ',
+      TOO_MANY_FEATURES: '地物が多すぎる',
+      NO_GEOMETRY: '位置の列がない',
+      MIXED_GEOMETRY: '点・線・面が混在',
+      UNKNOWN_COLUMN: '列が見つからない',
+      UNKNOWN_LAYER: 'レイヤーが見つからない',
+      INVALID_STYLE: 'スタイルが不正',
+      INVALID_INPUT: '入力が不正',
+      ENGINE_UNAVAILABLE: 'データエンジンが使えない',
+      SESSION_RESET: '会話をやり直したため中止'
+    },
+    /** The part of the line for a failure: `（` reason `）`. */
+    toolErrorWrap: ['（', '）'],
     /** The answer to a resumed turn could not be handed to the chat. */
     answerNotSent: '地図の操作結果を送れませんでした。「新しい会話」からやり直してください。',
     errors: chatErrorTexts,
@@ -253,10 +285,15 @@ export const chatConfig = {
   }
 } as const;
 
+/** The section of the left panel that holds the development boxes (dev builds only). */
+export const devPanelConfig = { title: '開発用' } as const;
+
 /** Layout values of the app shell. */
 export const layoutConfig = {
   /** At or below this viewport width (pixels): header, map and chat dock are stacked, and the layer panel starts collapsed. */
-  narrowViewportMaxPx: 640
+  narrowViewportMaxPx: 640,
+  /** On a narrow screen the map must keep room: the message list and the input of the chat dock are kept this small (CSS lengths). */
+  narrowChat: { listMaxHeight: '18dvh', inputHeight: '3.5rem' }
 } as const;
 
 const initialCenter: [number, number] = [137.0, 38.0];
