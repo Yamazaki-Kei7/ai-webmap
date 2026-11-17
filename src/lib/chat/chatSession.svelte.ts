@@ -38,6 +38,12 @@ export interface ChatSession {
   send(text: string): Promise<void>;
   /** A new conversation: the open turn is abandoned and its pending tool calls answered `SESSION_RESET`. */
   reset(): void;
+  /**
+   * Continues a saved conversation: its history is shown, it becomes the current one (and the stored one), and what it left
+   * pending is answered `SESSION_RESET` (the map was rebuilt from its SQL, not from those calls). When it cannot be opened
+   * (gone, or not the user's) the chat stays on a new conversation and `error` says so.
+   */
+  openConversation(conversationId: string): Promise<void>;
   /** Closes the subscriptions (when the panel goes away). */
   dispose(): void;
 }
@@ -85,9 +91,15 @@ type Conversation = {
   interrupted: boolean;
   /** The turn ended in a failure after raising interrupts: the server may still hold them pending. */
   unsettled: boolean;
+  /** Its history is being loaded: the interrupts that notifies are not run (they are answered `SESSION_RESET` once it is loaded). */
+  restoring: boolean;
+  /** Opened from a saved conversation whose pending calls could not be answered: the next `send` tries once more before it leaves it. */
+  reopened: boolean;
 };
 
 const sessionReset = toolError('SESSION_RESET', 'The conversation was reset by the user: the map no longer matches this request.', 'Do not call more tools. Stop.');
+
+const nothing = (): void => undefined;
 
 const defaultWait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -122,6 +134,8 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
 
   const conversations = new Set<Conversation>();
   let disposed = false;
+  // Counts the openings of a saved conversation: one that finds a later one has started stops.
+  let openings = 0;
 
   /** `call`, and again after each wait of `retryDelaysMs` while the store refuses for a state it has not reached yet. */
   async function retrying<T>(call: () => Promise<T>): Promise<T> {
@@ -158,7 +172,7 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     }
   });
 
-  let current = openConversation();
+  let current = startConversation();
 
   // A reload leaves the conversation of the last page behind: what it left pending is answered `SESSION_RESET` (the map is not restored), and it is forgotten.
   const stored = deps.store.read();
@@ -167,7 +181,7 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     void settlePending(stored.conversationId);
   }
 
-  function openConversation(): Conversation {
+  function startConversation(): Conversation {
     const chat = createChat({
       transport,
       api: {
@@ -188,7 +202,7 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
       onError: (message, cause) => endTurn(conversation, cause instanceof Error ? cause : new Error(message)),
       onInterrupt: (interrupts) => handleInterrupts(conversation, interrupts)
     });
-    const conversation: Conversation = { chat, discarded: false, turnOpen: false, handling: new Set(), answered: new Set(), interrupted: false, unsettled: false };
+    const conversation: Conversation = { chat, discarded: false, turnOpen: false, handling: new Set(), answered: new Set(), interrupted: false, unsettled: false, restoring: false, reopened: false };
     conversations.add(conversation);
     return conversation;
   }
@@ -201,14 +215,17 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
   /**
    * Answers every interrupt the server still holds pending in the conversation `SESSION_RESET`, in one resume. Best effort:
    * there is nobody to tell when it fails (the conversation is being left anyway), and it is never waited on for long.
+   * Says whether nothing is left pending (as far as it could tell).
    */
-  async function settlePending(conversationId: string): Promise<void> {
+  async function settlePending(conversationId: string): Promise<boolean> {
     try {
       const { interrupts } = await api.getPendingInterrupts(conversationId);
-      if (interrupts.length === 0) return;
+      if (interrupts.length === 0) return true;
       await api.resume(conversationId, interrupts.map(({ id }) => ({ interruptId: id, response: JSON.stringify(sessionReset) })));
+      return true;
     } catch {
       // Left as it is.
+      return false;
     }
   }
 
@@ -237,9 +254,9 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     if (!abandoned.turnOpen) {
       const id = abandoned.chat.getConversationId();
       closeConversation(abandoned);
-      if (abandoned.unsettled && id !== null) settled = settlePending(id);
+      if (abandoned.unsettled && id !== null) settled = settlePending(id).then(nothing);
     }
-    current = openConversation();
+    current = startConversation();
     messages = [];
     activity = [];
     return settled;
@@ -271,6 +288,7 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
   }
 
   function handleInterrupts(conversation: Conversation, interrupts: NotifiedInterrupt[]): void {
+    if (conversation.restoring) return;
     const fresh = interrupts.filter(({ interruptId }) => !conversation.answered.has(interruptId) && !conversation.handling.has(interruptId));
     if (fresh.length === 0) return;
     conversation.interrupted = true;
@@ -316,7 +334,18 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
       // The last turn left interrupts the server may still hold: they are answered `SESSION_RESET`, and the message goes to a new conversation.
       // The same happens once more when the server refuses the message for interrupts it holds (the browser never saw them).
       for (let recoveries = 0; ; recoveries++) {
-        if (current.unsettled) await replaceConversation();
+        if (current.unsettled) {
+          const id = current.chat.getConversationId();
+          const retry = current.reopened && id !== null;
+          if (retry && (await settlePending(id))) {
+            current.unsettled = false;
+            current.reopened = false;
+          } else {
+            await replaceConversation();
+            // What the user sees of the conversation they opened is gone: they are told.
+            if (retry) error = chatConfig.text.restoreNotContinued;
+          }
+        }
         if (disposed) return;
         const conversation = current;
         activity = [];
@@ -329,8 +358,39 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
         loading = true;
       }
     },
+    async openConversation(conversationId) {
+      if (disposed) return;
+      const opening = ++openings;
+      // Busy while it loads: nothing is sent to the conversation that is being left, or to this one before it is whole.
+      loading = true;
+      await replaceConversation();
+      if (opening !== openings || disposed) return;
+      error = null;
+      const conversation = current;
+      conversation.restoring = true;
+      try {
+        await conversation.chat.loadConversation(conversationId);
+        if (opening !== openings) return;
+        conversation.restoring = false;
+        deps.store.write({ owner: deps.owner, conversationId });
+        // What it left pending belongs to a map that is gone: answered, and when that fails the next `send` settles it.
+        if (!(await settlePending(conversationId))) {
+          conversation.unsettled = true;
+          conversation.reopened = true;
+        }
+      } catch (failure) {
+        if (opening !== openings) return;
+        // The chat is bound to the conversation it failed to load: it is left for a new one.
+        await replaceConversation();
+        if (failure instanceof Error) error = failure.name === conversationErrors.NotFound ? chatConfig.text.restoreNotFound : describeError(failure);
+        else error = chatConfig.text.errorGeneric;
+      } finally {
+        if (opening === openings) loading = false;
+      }
+    },
     reset() {
       if (disposed) return;
+      openings++;
       void replaceConversation();
       error = null;
       loading = false;

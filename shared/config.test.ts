@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { LngLatLike } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
+import { layerIdPattern } from './mapSpec';
 import { toolErrorCodeSchema } from './toolProtocol';
 import {
   agentConfig,
@@ -111,6 +112,12 @@ describe('config invariants', () => {
     expect(new Set(colors).size).toBe(colors.length);
   });
 
+  it('names the label anchor so that no layer id (and so no map layer of a layer) can be it', () => {
+    expect(mapConfig.labelAnchorLayerId).not.toMatch(layerIdPattern);
+    expect(mapConfig.labelAnchorLayerId).not.toMatch(/^L\d+-/);
+    expect(['polygon', 'line', 'point']).toContain(mapConfig.errorLayerGeometry);
+  });
+
   it('keeps the model layer summary within one tool result, and gives its caps positive values', () => {
     expect(mapConfig.summaryMaxBytes).toBeLessThanOrEqual(resultConfig.maxToolResultBytes);
     const caps = [
@@ -121,6 +128,7 @@ describe('config invariants', () => {
       mapConfig.summaryMaxStringChars,
       mapConfig.summaryMaxWarnings,
       mapConfig.summaryMaxWarningChars,
+      mapConfig.summaryErrorChars,
       mapConfig.summaryShrunkCategories
     ];
     for (const cap of caps) expect(cap).toBeGreaterThan(0);

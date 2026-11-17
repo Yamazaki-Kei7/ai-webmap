@@ -1,5 +1,4 @@
-import { bboxSchema } from '../../../shared/catalog-schema';
-import { mapConfig, queryConfig, styleConfig, toolConfig } from '../../../shared/config';
+import { mapConfig, queryConfig, toolConfig } from '../../../shared/config';
 import type { AppliedStyle, LabelSpec, StyleSpec, ViewTarget } from '../../../shared/mapSpec';
 import {
   clientToolRequestSchema,
@@ -13,7 +12,9 @@ import {
 } from '../../../shared/toolProtocol';
 import { firstLineWithoutUrls } from '../duckdb/errors';
 import type { Bbox, LayerQueryResult, TableQueryResult } from '../duckdb/queryTypes';
+import { outsideDegrees } from '../map/degrees';
 import type { LayerState, NewLayer } from '../map/mapState.svelte';
+import { clampZoom } from '../map/zoom';
 import type { FitOptions, MapView } from './mapView';
 
 /**
@@ -35,6 +36,8 @@ export type ToolExecutorDeps = {
     layerIds: () => string[];
     /** The layer's `applied` as `<map_state>` shows it. */
     appliedOf: (layerId: string) => AppliedStyle | undefined;
+    /** The number of the map's session: it changes when the map is reset (sign-out, a restored map). */
+    currentSession: () => number;
   };
   view: MapView;
 };
@@ -58,19 +61,7 @@ function invalidInput(issues: readonly { path: readonly PropertyKey[] }[]): Tool
   return toolError('INVALID_INPUT', `The request is not valid at: ${paths.join(', ')}.`, 'Check the tool name and its input against the tool description.');
 }
 
-/** A layer whose geometries leave longitude/latitude cannot be answered (the answer would fail the backend's schema): it is refused before anything is added. */
-function outsideDegrees(data: LayerQueryResult): ToolResult | undefined {
-  if (data.featureCount === 0 || bboxSchema.safeParse(data.bbox).success) return undefined;
-  return toolError(
-    'SQL_ERROR',
-    'The geometries are outside longitude/latitude degrees.',
-    'Distances and buffers on this data are in degrees: use the _spheroid functions for metres, or ST_DWithin in degrees, as the prompt says.'
-  );
-}
-
 const round = (value: number): number => Number(value.toFixed(toolConfig.viewDecimals));
-
-const clampZoom = (zoom: number): number => Math.min(Math.max(zoom, styleConfig.zoom.min), styleConfig.zoom.max);
 
 const sameJson = (a: StyleSpec | LabelSpec | null, b: StyleSpec | LabelSpec | null): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -107,7 +98,10 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     const previous = replaceLayerId === undefined ? undefined : map.getLayer(replaceLayerId);
     if (replaceLayerId !== undefined && previous === undefined) return unknownLayer(replaceLayerId);
 
+    const session = map.currentSession();
     const queried = await deps.queryLayer(input.sql);
+    // The map was reset (a restored map, a sign-out) while the query ran: the layer belongs to a map that is gone.
+    if (session !== map.currentSession()) return toolError('SESSION_RESET', 'The map was replaced while the query ran, so the layer was not added.', 'Do not call more tools for this request. Stop.');
     if (!queried.ok) return queried;
     const outside = outsideDegrees(queried.data);
     if (outside) return outside;

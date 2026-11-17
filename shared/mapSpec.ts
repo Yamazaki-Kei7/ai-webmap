@@ -224,8 +224,11 @@ const contextLayerSchema = z.strictObject({
 
 export const mapContextSchema = z.strictObject({
   view: z.strictObject({ center: z.tuple([longitudeSchema, latitudeSchema]), zoom: z.number() }),
-  /** Layers beyond `mapConfig.summaryMaxLayers` (or dropped to fit) are only an id and a name. */
-  layers: z.array(z.union([contextLayerSchema, z.strictObject({ id: z.string(), name: z.string() })])),
+  /**
+   * Layers beyond `mapConfig.summaryMaxLayers` (or dropped to fit) are only an id and a name. A layer that failed to load
+   * (a restored map) is an id, a name, the short `error` note and its (cut) SQL: it has no features to describe.
+   */
+  layers: z.array(z.union([contextLayerSchema, z.strictObject({ id: z.string(), name: z.string(), error: z.string().optional(), sql: z.string().optional() })])),
   /** Set when the summary had to be cut down to fit `mapConfig.summaryMaxBytes`. */
   truncated: z.literal(true).optional()
 });

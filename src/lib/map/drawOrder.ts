@@ -1,6 +1,10 @@
+import { mapConfig } from '../../../shared/config';
 import type { GeometryFamily } from '../../../shared/mapSpec';
 
-/** Polygons are drawn below lines, and lines below points; the labels of every layer are above all of them. */
+/**
+ * Polygons are drawn below lines, and lines below points; the labels of every layer are above all of them: the geometry
+ * goes below the hidden anchor layer (`mapConfig.labelAnchorLayerId`), the labels above it.
+ */
 const familyRank: Record<GeometryFamily, number> = { polygon: 0, line: 1, point: 2 };
 
 type Ordered = { geometryType: GeometryFamily };
@@ -37,36 +41,22 @@ export function bottomMapLayerId(layer: Identified): string {
 
 /**
  * The map layer the geometry of the layer at `index` of `bottomUp` goes below: the lowest map layer of the nearest layer
- * above it that is already on the map; failing that the lowest label on the map (labels are above all geometry);
- * undefined (the top) when there is none. Map layers are added after the render, so layers added together find none of
- * each other: with the layers listed bottom to top they are added in that order and stack right (geometry of all
- * layers first, then the labels).
+ * above it that is already on the map; failing that the anchor, which is below every label whenever the layers were added.
+ * Map layers are added after the render, so layers added together find none of each other: with the layers listed bottom
+ * to top they are added in that order and each goes below the anchor, which stacks them right.
  */
-export function beforeMapLayerId(
-  bottomUp: readonly Identified[],
-  index: number,
-  existsOnMap: (mapLayerId: string) => boolean
-): string | undefined {
-  return (
-    bottomUp.slice(index + 1).map(bottomMapLayerId).find(existsOnMap) ??
-    bottomUp.map(({ id }) => mapLayerIds(id).label).find(existsOnMap)
-  );
+export function beforeMapLayerId(bottomUp: readonly Identified[], index: number, existsOnMap: (mapLayerId: string) => boolean): string {
+  return bottomUp.slice(index + 1).map(bottomMapLayerId).find(existsOnMap) ?? mapConfig.labelAnchorLayerId;
 }
 
-/** The map layer the label of the layer at `index` goes below: the nearest label above it that is on the map, else the top. */
+/**
+ * The map layer the label of the layer at `index` goes below: the nearest label above it that is on the map, else the top
+ * (above the anchor, so above all geometry). Labels added together are added in draw order, so they stack right.
+ */
 export function beforeLabelLayerId(
   bottomUp: readonly Identified[],
   index: number,
   existsOnMap: (mapLayerId: string) => boolean
 ): string | undefined {
   return bottomUp.slice(index + 1).map(({ id }) => mapLayerIds(id).label).find(existsOnMap);
-}
-
-/**
- * The ids of the labels, in draw order. Layers rendered together cannot see each other's map layers when they pick their
- * `beforeId`, so a label can land under the geometry of a layer added in the same tick; moving these to the top in this
- * order puts every label above all geometry again.
- */
-export function labelMapLayerIds(bottomUp: readonly { id: string; label: object | null }[]): string[] {
-  return bottomUp.filter(({ label }) => label !== null).map(({ id }) => mapLayerIds(id).label);
 }

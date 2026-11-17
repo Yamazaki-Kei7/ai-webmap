@@ -1,11 +1,11 @@
 import { SvelteMap } from 'svelte/reactivity';
-import { mapConfig } from '../../../shared/config';
+import { mapConfig, styleConfig } from '../../../shared/config';
 import type { AppliedStyle, GeometryFamily, LabelSpec, MapContext, StyleSpec } from '../../../shared/mapSpec';
 import { datasetIds } from '../../../shared/datasets';
 import { validateSql } from '../../../shared/sqlGuard';
 import { toolError, type ClientToolResult } from '../../../shared/toolProtocol';
 import type { Bbox, ColumnInfo, GeoJsonFeatureCollection, LayerQueryResult } from '../duckdb/queryTypes';
-import { checkLabel, resolveStyle, type ResolvedStyle } from './styleCompiler';
+import { checkLabel, resolveCommon, resolveStyle, type ResolvedStyle } from './styleCompiler';
 import { buildMapContext, summarizeLayerApplied } from './summary';
 
 /** What a layer is made of: the name and the query, and optionally how to draw it (else a single colour, no label). */
@@ -93,32 +93,84 @@ function pickLabel(given: LabelSpec | null | undefined, fallback: LabelSpec | nu
   return { ok: true, data: fallback && checkLabel(fallback, columns).ok ? fallback : null };
 }
 
-export function addLayer(input: NewLayer, data: LayerQueryResult): ClientToolResult<LayerState> {
-  const seq = mapState.nextLayerSeq;
+/** A layer from a query result under the given id, not yet on the map; an error when the style or the label does not fit the data. */
+function buildLayer(id: string, input: NewLayer, data: LayerQueryResult): ClientToolResult<LayerState> {
+  const seq = layerSeq(id);
   const picked = pickStyle(input.style, defaultStyle(seq), seq, data);
   if (!picked.ok) return picked;
   const label = pickLabel(input.label, null, data.columns);
   if (!label.ok) return label;
-  mapState.nextLayerSeq = seq + 1;
-  const layer: LayerState = {
-    id: `L${seq}`,
-    name: input.name,
-    sql: input.sql,
-    datasetIds: datasetsOf(input.sql),
-    geometryType: data.geometryType,
-    columns: data.columns,
-    featureCount: data.featureCount,
-    bbox: data.bbox,
-    visible: true,
-    style: picked.data.style,
-    label: label.data,
-    resolved: picked.data.resolved,
-    status: 'ready'
+  return {
+    ok: true,
+    data: {
+      id,
+      name: input.name,
+      sql: input.sql,
+      datasetIds: datasetsOf(input.sql),
+      geometryType: data.geometryType,
+      columns: data.columns,
+      featureCount: data.featureCount,
+      bbox: data.bbox,
+      visible: true,
+      style: picked.data.style,
+      label: label.data,
+      resolved: picked.data.resolved,
+      status: 'ready'
+    }
   };
-  featuresByLayer.set(layer.id, data.features);
+}
+
+/** Puts a built layer on the map, with its features; hands back the layer as the state holds it (proxied, so that a later change to it shows). */
+function pushLayer(layer: LayerState, features?: GeoJsonFeatureCollection): LayerState {
+  if (features) featuresByLayer.set(layer.id, features);
   mapState.layers.push(layer);
-  // The pushed object is proxied; hand back that one, so a later change to it shows in the state.
-  return { ok: true, data: mapState.layers[mapState.layers.length - 1] };
+  return mapState.layers[mapState.layers.length - 1];
+}
+
+export function addLayer(input: NewLayer, data: LayerQueryResult): ClientToolResult<LayerState> {
+  const seq = mapState.nextLayerSeq;
+  const built = buildLayer(`L${seq}`, input, data);
+  if (!built.ok) return built;
+  mapState.nextLayerSeq = seq + 1;
+  return { ok: true, data: pushLayer(built.data, data.features) };
+}
+
+/** A layer of a saved map: as it was saved (id, name, SQL, style, label, whether it shows). */
+export type RestoredLayer = { id: string; name: string; sql: string; style: StyleSpec; label: LabelSpec | null; visible: boolean };
+
+/** Adds a layer of a saved map under its saved id, from the result of its SQL; an error (nothing added) when the saved style or label no longer fits the data. */
+export function restoreLayer(saved: RestoredLayer, data: LayerQueryResult): ClientToolResult<LayerState> {
+  const built = buildLayer(saved.id, saved, data);
+  if (!built.ok) return built;
+  return { ok: true, data: pushLayer({ ...built.data, visible: saved.visible }, data.features) };
+}
+
+/** Adds a layer of a saved map that could not be rebuilt: it has no features and draws nothing, and its card shows `message`. */
+export function addErrorLayer(saved: RestoredLayer, message: string): LayerState {
+  const geometryType = mapConfig.errorLayerGeometry;
+  const placeholder: StyleSpec = { type: 'single', color: styleConfig.noDataColor };
+  return pushLayer({
+    id: saved.id,
+    name: saved.name,
+    sql: saved.sql,
+    // Nothing is drawn from it, so there is nothing to attribute.
+    datasetIds: [],
+    geometryType,
+    columns: [],
+    featureCount: 0,
+    bbox: [0, 0, 0, 0],
+    visible: saved.visible,
+    style: saved.style,
+    label: saved.label,
+    resolved: { type: 'single', color: styleConfig.noDataColor, common: resolveCommon(placeholder, geometryType) },
+    status: 'error',
+    errorMessage: message
+  });
+}
+
+/** Sets the number the next layer gets (a restore): never lower than the layers it holds, or the ids it is about to restore (`reserved`), need. */
+export function setNextLayerSeq(seq: number, reserved: readonly string[] = []): void {
+  mapState.nextLayerSeq = Math.max(seq, ...[...mapState.layers.map((layer) => layer.id), ...reserved].map((id) => layerSeq(id) + 1));
 }
 
 /**
@@ -145,6 +197,9 @@ export function replaceLayer(layerId: string, input: NewLayer, data: LayerQueryR
   layer.style = picked.data.style;
   layer.label = label.data;
   layer.resolved = picked.data.resolved;
+  // A layer that failed to load is ready now.
+  layer.status = 'ready';
+  layer.errorMessage = undefined;
   return { ok: true, data: layer };
 }
 
@@ -152,7 +207,8 @@ export function replaceLayer(layerId: string, input: NewLayer, data: LayerQueryR
 export function setStyle(layerId: string, style: StyleSpec): ClientToolResult<LayerState> {
   const layer = mapState.layers.find((l) => l.id === layerId);
   const features = featuresByLayer.get(layerId);
-  if (!layer || !features) return unknownLayer(layerId);
+  if (!layer) return unknownLayer(layerId);
+  if (!features) return toolError('INVALID_STYLE', `Layer "${layerId}" failed to load, so it has no data to style.`, 'Replace it with addLayer (replaceLayerId) first.');
   const resolved = resolveStyle(style, layer.geometryType, features);
   if (!resolved.ok) return resolved;
   layer.style = style;

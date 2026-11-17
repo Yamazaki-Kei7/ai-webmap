@@ -218,6 +218,7 @@ function mapStateSection(): string {
     '- view: 地図の中心（経度, 緯度）とズーム。',
     '- layers: レイヤーの一覧。id（L1 のような名前）、name、geometryType、featureCount、visible、sql（長いと途中で切れます）、columns、style、label、applied。',
     '- applied は、スタイルが実際のデータにどう当たったかです。graduated なら breaks と colors、categorized なら categories と色です。色を聞かれたら、applied から答えます。',
+    '- error があるレイヤーは、保存した地図の復元に失敗したものです。地物はありません。直すときは addLayer の replaceLayerId で作り直し、要らなければ removeLayer で消します。',
     `- layers が多いときは、${mapConfig.summaryMaxLayers} 個を超えるレイヤーは id と name だけになります。`,
     '- truncated が true のときは、情報が省かれています。必要なら、ユーザーにたずねます。',
     '- style と label の column は、そのレイヤーの columns から選びます。columns にない名前は使いません（columnCount が columns より多いときは、runQuery で確かめます）。',

@@ -55,7 +55,9 @@
     <p class="text-xs break-words text-bb-danger" role="alert" data-testid="layer-status">{layer.errorMessage ?? 'エラーが発生しました'}</p>
   {/if}
 
-  <Legend {layer} />
+  {#if layer.status !== 'error'}
+    <Legend {layer} />
+  {/if}
 
   <div class="flex flex-col gap-1">
     <button

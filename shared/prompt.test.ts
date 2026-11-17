@@ -170,6 +170,11 @@ describe('buildSystemPrompt: content', () => {
     expect(prompt).toContain('columns から選びます');
   });
 
+  it('says that a layer with error failed to load and how to repair it', () => {
+    expect(prompt).toContain('error があるレイヤーは、保存した地図の復元に失敗したもの');
+    expect(prompt).toContain('replaceLayerId で作り直し');
+  });
+
   it('says what replaceLayerId does with the style and label', () => {
     expect(prompt).toContain('style と label を付ければそれが新しい設定になり');
   });

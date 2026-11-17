@@ -292,6 +292,10 @@ export const chatConfig = {
     toolErrorWrap: ['（', '）'],
     /** The answer to a resumed turn could not be handed to the chat. */
     answerNotSent: '地図の操作結果を送れませんでした。「新しい会話」からやり直してください。',
+    /** Opening a saved conversation found none (it is gone, or is not the user's): the chat stays on a new one. */
+    /** An opened conversation could not be continued (its pending calls could not be settled): a new one was started. */
+    restoreNotContinued: '前の会話を続けられなかったため、新しい会話を始めました',
+    restoreNotFound: '保存された会話が見つかりません。新しい会話で続けてください。',
     errors: chatErrorTexts,
     errorGeneric: 'エラーが起きました。「新しい会話」からやり直してください。'
   }
@@ -323,6 +327,13 @@ export const mapConfig = {
   moveWaitMs: 2_000,
   /** A layer of one point (or a tiny extent) is not zoomed in beyond this. */
   fitMaxZoom: 14,
+  /**
+   * The hidden map layer every geometry is placed below and every label above: the order of labels over geometry then
+   * does not depend on when the layers were added.
+   */
+  labelAnchorLayerId: 'label-anchor',
+  /** A layer that failed to load has no geometry; its card sits at the bottom of the list, as a polygon's would. */
+  errorLayerGeometry: 'polygon',
   label: {
     /** A font stack the basemap's glyph server has (the fonts of `basemapStyleUrl`'s own labels, read from its style JSON). */
     fontStack: ['Noto Sans Regular'],
@@ -351,6 +362,8 @@ export const mapConfig = {
   /** At most this many warnings of a layer's style are listed, each cut to `summaryMaxWarningChars`. */
   summaryMaxWarnings: 2,
   summaryMaxWarningChars: 160,
+  /** The note on a layer that failed to load (restore of a saved map) is cut to this many characters. */
+  summaryErrorChars: 160,
   /** The step that shrinks an oversized summary lists only this many categories of a layer (`categoryCount` tells how many). */
   summaryShrunkCategories: 6,
   /** The summary (JSON, UTF-8 bytes) is kept below this: when it is over, it is shrunk step by step. */

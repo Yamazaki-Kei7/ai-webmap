@@ -59,6 +59,17 @@ function summarizeLayer(layer: LayerState): MapContextLayer {
 /** The `applied` of one layer as `<map_state>` shows it (the same numbering of cut values), for the tool answers that report it. */
 export const summarizeLayerApplied = (layer: LayerState): AppliedStyle => summarizeLayer(layer).applied;
 
+/** A layer that failed to load: the model is told its id, name, why and its SQL (it has no features, columns or style to describe). */
+const summarizeFailed = (layer: LayerState): MapContext['layers'][number] => ({
+  id: layer.id,
+  name: clip(layer.name),
+  error: truncate(layer.errorMessage ?? '', mapConfig.summaryErrorChars),
+  // What to repair: the model replaces the layer with a corrected query.
+  sql: truncate(layer.sql, mapConfig.summarySqlChars)
+});
+
+const summarizeAny = (layer: LayerState): MapContext['layers'][number] => (layer.status === 'error' ? summarizeFailed(layer) : summarizeLayer(layer));
+
 const isDetailed = (layer: MapContext['layers'][number]): layer is MapContextLayer => 'columns' in layer;
 
 /** Maps the detailed layers of a context (the others stay as they are). */
@@ -97,7 +108,7 @@ export function buildMapContext(
   maxBytes: number = mapConfig.summaryMaxBytes
 ): MapContext {
   const [lng, lat] = view.center;
-  const listed = layers.slice(0, mapConfig.summaryMaxLayers).map(summarizeLayer);
+  const listed = layers.slice(0, mapConfig.summaryMaxLayers).map(summarizeAny);
   const rest = layers.slice(mapConfig.summaryMaxLayers).map(({ id, name }) => ({ id, name: clip(name) }));
   let context: MapContext = { view: { center: [lng, lat], zoom: view.zoom }, layers: [...listed, ...rest] };
   for (const step of shrinkSteps) {

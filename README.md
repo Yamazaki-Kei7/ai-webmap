@@ -291,6 +291,10 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 
 右のドックにチャットパネル（`src/lib/components/ChatPanel.svelte`。メッセージは `ChatMessage.svelte`、ツールの実行状況は `ToolActivity.svelte`）があります。入力は Enter で送信、Shift+Enter で改行で、IME の変換確定の Enter では送りません。データエンジンの準備中は入力を止め、起動に失敗したときはパネルに再試行つきのバナーを出し、許可リストにないアカウントでは「このアカウントはデータを利用できません」と出してチャットを使えなくします。文言と値は `shared/config.ts` の `chatConfig` にあります。会話は `src/lib/chat/chatSession.svelte.ts` が動かします。Agent ブロックの `createChat` を Realtime のトランスポートで `agent*` の API につなぎ、モデルのツール呼び出し（interrupt）をブラウザの実行器で動かして、結果をまとめて 1 回で返します。ターンが終わる（`done` かエラー）まで送信できません。「新しい会話」を押すと、実行中のターンは捨てられ、その後のツール呼び出しには `SESSION_RESET` を返します。ストアの結果整合のための 409 / 404 は、`shared/config.ts` の `chatConfig.retryDelaysMs` の間隔で再試行します。ページを再読み込みすると会話は引き継がれません（古い会話の保留中の interrupt はサーバーに残ります）。
 
+### 地図の保存と復元（ブラウザ側、UI は Task 6.3）
+
+`src/lib/map/persist.svelte.ts` の `toPersisted()` が、いまの地図を `persistedMapStateSchema` に合う状態（地物なし）にして `{ ok: true, state }` で返します（レイヤーが上限を超えると `{ ok: false, reason: 'tooManyLayers' }`、スキーマに合わないと `'invalid'`。例外は投げません。ズームは保存できる範囲に丸めます）。`restoreMap(state, { queryLayer, jumpTo })` は、状態をスキーマで検査し（不正なら何もせず `report.invalid`）、地図を空にして（保存された id は先に確保します）から、保存順に 1 枚ずつ、SQL ガードを通る `queryLayer` で SQL を実行し直し、保存された id・名前・スタイル・ラベル・表示/非表示でレイヤーを戻します（表示範囲は最後に戻し、レイヤーごとの自動フィットはしません）。クエリやスタイルが失敗したレイヤーは、`status: 'error'` のエラーレイヤーとして一覧に残り（カードにメッセージを出し、地図には描かず、`<map_state>` には id・名前・`error` だけを載せます）、ほかのレイヤーは復元されます。進み具合は `restoreProgress.current`（`{ done, total }`）、結果は `RestoreReport`（`restored`、`failed`）です。復元中にもう一度復元すると、前のものは打ち切られます。`ChatSession.openConversation(conversationId)` は、保存された会話の履歴を表示して続きの会話にし、保留中の interrupt には `SESSION_RESET` を返します（見つからなければ日本語のエラーを出し、新しい会話のままです）。ラベルがジオメトリの上に出る順序は、非表示のアンカーレイヤー（`mapConfig.labelAnchorLayerId`）で決めます。ジオメトリはその下、ラベルはその上に入れるので、追加の順序やタイミングに左右されません。開発サーバーでは、ブラウザ確認用に `window.__aiWebmapPersist`（保存・復元・API）と `window.__aiWebmapChat`（`openConversation`）が使えます。
+
 ### データエンジン（DuckDB-WASM）
 
 `src/lib/duckdb/` がブラウザ内の DuckDB-WASM（`eh` ビルドのみ）を起動し、Parquet を必要になった時点で取得してビューにします。サインイン後に `+page.svelte` が起動し、サインアウトで破棄します。

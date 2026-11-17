@@ -62,6 +62,20 @@ describe('buildMapContext', () => {
     expect(first.style.type === 'categorized' && Object.keys(first.style.overrides ?? {}).some((key) => key.endsWith('…'))).toBe(true);
   });
 
+  it('lists a layer that failed to load by id, name and a short error note, and validates against the schema', () => {
+    const failed = layer(2, [{ a: 1 }], { type: 'single', color: '#112233' }, {
+      status: 'error',
+      errorMessage: 'x'.repeat(mapConfig.summaryErrorChars * 2)
+    });
+    const context = buildMapContext(view, [layer(1, [{ a: 1 }], { type: 'single', color: '#112233' }), failed]);
+    expect(mapContextSchema.safeParse(context).success).toBe(true);
+    const listed = context.layers[1];
+    expect(Object.keys(listed).sort()).toEqual(['error', 'id', 'name', 'sql']);
+    expect('error' in listed && listed.error).toHaveLength(mapConfig.summaryErrorChars);
+    expect('sql' in listed && listed.sql).toBe('SELECT * FROM t');
+    expect(detailed(context).map(({ id }) => id)).toEqual(['L1']);
+  });
+
   it('keeps overrides and categories with a shared long prefix distinct', () => {
     const prefix = 'あ'.repeat(mapConfig.summaryMaxStringChars + 5);
     const values = Array.from({ length: 12 }, (_, i) => `${prefix}${i}`);

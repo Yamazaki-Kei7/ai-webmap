@@ -4,7 +4,7 @@ import { bindChatToUser } from './chatBinding.svelte';
 import type { ChatSession } from './chatSession.svelte';
 
 function fakeSession(): ChatSession {
-  return { messages: [], isLoading: false, activity: [], error: null, send: vi.fn(async () => undefined), reset: vi.fn(), dispose: vi.fn() };
+  return { messages: [], isLoading: false, activity: [], error: null, send: vi.fn(async () => undefined), openConversation: vi.fn(async () => undefined), reset: vi.fn(), dispose: vi.fn() };
 }
 
 function setup() {

@@ -69,7 +69,7 @@ export type ResolvedStyle =
 
 const { defaults } = styleConfig;
 
-function resolveCommon(style: StyleSpec, geometryType: GeometryFamily): ResolvedCommon {
+export function resolveCommon(style: StyleSpec, geometryType: GeometryFamily): ResolvedCommon {
   return {
     opacity: style.opacity ?? defaults.opacity[geometryType],
     strokeColor: style.strokeColor ?? defaults.strokeColor,
@@ -218,6 +218,8 @@ export type StyledLayer = {
   visible: boolean;
   label: LabelSpec | null;
   resolved: ResolvedStyle;
+  /** A layer that failed to load (`'error'`) has no features and no map layers. */
+  status?: 'ready' | 'loading' | 'error';
 };
 
 const property = (column: string): ExpressionSpecification => ['get', column];
@@ -307,6 +309,7 @@ function labelLayer(layer: StyledLayer, label: LabelSpec): SymbolLayerSpecificat
  * circle), then the label when there is one. Plain data: the map view hands each one to the map.
  */
 export function toMapLibreLayers(layer: StyledLayer): MapLibreLayerSpec[] {
+  if (layer.status === 'error') return [];
   const ids = mapLayerIds(layer.id);
   const { resolved } = layer;
   const { common } = resolved;

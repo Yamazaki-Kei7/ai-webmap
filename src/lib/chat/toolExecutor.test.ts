@@ -6,6 +6,7 @@ import type { GeoJsonFeature, JsonRow, LayerQueryResult, TableQueryResult } from
 import {
   addLayer,
   appliedOf,
+  currentSession,
   getLayer,
   layerIds,
   mapState,
@@ -91,7 +92,7 @@ function fakes(): Fakes {
       state.tableSql.push(sql);
       return state.tableAnswer;
     },
-    map: { addLayer, replaceLayer, setStyle, setLabel, removeLayer, getLayer, layerIds, appliedOf },
+    map: { addLayer, replaceLayer, setStyle, setLabel, removeLayer, getLayer, layerIds, appliedOf, currentSession },
     view
   };
   return Object.assign(state, { deps });
@@ -130,6 +131,22 @@ describe('createToolExecutor', () => {
     // Ids go on counting across a reset; the tests name layers by their number from 1.
     mapState.nextLayerSeq = 1;
     state = fakes();
+  });
+
+  describe('a map reset while the query of addLayer runs', () => {
+    it('answers SESSION_RESET and adds nothing (a restored map or a sign-out replaced the map)', async () => {
+      const queryLayer = state.deps.queryLayer;
+      const deps: ToolExecutorDeps = {
+        ...state.deps,
+        queryLayer: async (sql) => {
+          resetMapState();
+          return queryLayer(sql);
+        }
+      };
+      const result = await createToolExecutor(deps)(addRequest());
+      expect(failure(result).code).toBe('SESSION_RESET');
+      expect(layerIds()).toEqual([]);
+    });
   });
 
   describe('requests that are not valid', () => {
@@ -490,7 +507,7 @@ describe('createToolExecutor', () => {
       const deps: ToolExecutorDeps = {
         queryLayer: async () => thrower(),
         queryTable: async () => thrower(),
-        map: { addLayer: thrower, replaceLayer: thrower, setStyle: thrower, setLabel: thrower, removeLayer: thrower, getLayer: thrower, layerIds: thrower, appliedOf: thrower },
+        map: { addLayer: thrower, replaceLayer: thrower, setStyle: thrower, setLabel: thrower, removeLayer: thrower, getLayer: thrower, layerIds: thrower, appliedOf: thrower, currentSession: thrower },
         view: { fitBounds: async () => thrower(), jumpTo: thrower, getView: thrower }
       };
       const error = failure(await createToolExecutor(deps)(requests[tool]));

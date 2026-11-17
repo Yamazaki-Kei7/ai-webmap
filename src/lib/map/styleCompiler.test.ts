@@ -387,6 +387,10 @@ function only<T extends MapLibreLayerSpec['type']>(specs: MapLibreLayerSpec[], t
 describe('toMapLibreLayers', () => {
   const single: StyleSpec = { type: 'single', color: '#112233', opacity: 0.4, strokeColor: '#aabbcc', strokeWidth: 3, size: 8 };
 
+  it('draws nothing for a layer that failed to load', () => {
+    expect(toMapLibreLayers({ ...layerOf(single, [{ a: 1 }], 'polygon', { label: { column: 'a' } }), status: 'error' })).toEqual([]);
+  });
+
   it('draws a polygon as a fill and then an outline, with the common values', () => {
     const specs = toMapLibreLayers(layerOf(single, [{ a: 1 }], 'polygon'));
     expect(specs.map((s) => [s.id, s.type, s.source])).toEqual([['L3-fill', 'fill', 'L3'], ['L3-outline', 'line', 'L3']]);

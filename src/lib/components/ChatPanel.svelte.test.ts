@@ -26,6 +26,7 @@ vi.mock('$lib/chat/chatSession.svelte', () => ({
       return fake.error;
     },
     send,
+    openConversation: async () => undefined,
     reset,
     dispose: () => undefined
   })

@@ -1,6 +1,6 @@
 import { queryLayer, queryTable } from '../duckdb/engine';
 import { fittedLayerIds } from '../map/fit';
-import { addLayer, appliedOf, getLayer, layerIds, removeLayer, replaceLayer, setLabel, setStyle } from '../map/mapState.svelte';
+import { addLayer, appliedOf, currentSession, getLayer, layerIds, removeLayer, replaceLayer, setLabel, setStyle } from '../map/mapState.svelte';
 import { markingFitted } from './fitRegistration';
 import { createMapView, type CameraMap } from './mapView';
 import { createToolExecutor, type ToolExecutor } from './toolExecutor';
@@ -21,7 +21,8 @@ export function createClientToolExecutor(getMap: () => CameraMap | undefined): T
       removeLayer,
       getLayer,
       layerIds,
-      appliedOf
+      appliedOf,
+      currentSession
     },
     view: createMapView(getMap)
   });

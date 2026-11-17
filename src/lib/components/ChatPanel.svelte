@@ -25,6 +25,15 @@
     createSession: (name) => createChatSession({ api: chatApi, owner: name, store, executor: createClientToolExecutor(() => map), mapContext: summarizeForLlm })
   });
   const session = $derived(binding.session);
+  if (import.meta.env.DEV) {
+    // Browser checks reach the session (`openConversation`) through this.
+    $effect(() => {
+      window.__aiWebmapChat = session;
+      return () => {
+        window.__aiWebmapChat = undefined;
+      };
+    });
+  }
   const messages = $derived(session?.messages ?? []);
   const activity = $derived(session?.activity ?? []);
   const busy = $derived(session?.isLoading ?? false);
