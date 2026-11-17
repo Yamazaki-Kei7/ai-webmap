@@ -312,3 +312,120 @@ describe('ensureViews and restart', () => {
     expect(created[1].statements.filter((sql) => sql.startsWith('CREATE VIEW'))).toHaveLength(1);
   });
 });
+
+describe('a restart that no one on the page asked for (a stuck query)', () => {
+  it('reports to the listener the page gave last: loading, then ready', async () => {
+    const { engine, statuses, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    statuses.length = 0;
+    await engine.restartEngine();
+    expect(statuses[0]).toMatchObject({ state: 'loading' });
+    expect(statuses.at(-1)).toEqual({ state: 'ready', duckdbVersion: 'v1' });
+  });
+
+  it('reports the error, and a retry through the page reaches ready again', async () => {
+    let calls = 0;
+    const { engine, statuses, onStatus } = setup({
+      fetchSources: async () => {
+        calls += 1;
+        if (calls === 2) throw new Error('sources are down');
+        return sourcesOf('a');
+      }
+    });
+    await engine.initEngine(onStatus);
+    await expect(engine.restartEngine()).rejects.toThrow('sources are down');
+    expect(statuses.at(-1)).toEqual({ state: 'error', message: 'sources are down' });
+    await engine.initEngine(onStatus);
+    expect(statuses.at(-1)).toEqual({ state: 'ready', duckdbVersion: 'v1' });
+  });
+
+  it('has no listener after the engine was disposed', async () => {
+    const { engine, statuses, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    await engine.disposeEngine();
+    statuses.length = 0;
+    await engine.restartEngine();
+    expect(statuses).toEqual([]);
+  });
+});
+
+describe('restartIfCurrent', () => {
+  it('restarts when the stuck session is the running one, reporting to the page', async () => {
+    const { engine, created, statuses, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    statuses.length = 0;
+    expect(await engine.restartIfCurrent((session) => session === created[0])).toBe(true);
+    expect(created).toHaveLength(2);
+    expect(statuses.at(-1)).toEqual({ state: 'ready', duckdbVersion: 'v1' });
+  });
+
+  it('does nothing after a sign-out: no restart, no new engine', async () => {
+    const { engine, created, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    await engine.disposeEngine();
+    expect(await engine.restartIfCurrent(() => true)).toBe(false);
+    expect(created).toHaveLength(1);
+  });
+
+  it('does nothing when a newer restart has already replaced the stuck session', async () => {
+    const { engine, created, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    await engine.restartEngine(onStatus);
+    expect(await engine.restartIfCurrent((session) => session === created[0])).toBe(false);
+    expect(created).toHaveLength(2);
+  });
+
+  it('does not throw when the restart fails', async () => {
+    let calls = 0;
+    const { engine, onStatus } = setup({
+      fetchSources: async () => {
+        calls += 1;
+        if (calls === 2) throw new Error('sources are down');
+        return sourcesOf('a');
+      }
+    });
+    await engine.initEngine(onStatus);
+    await expect(engine.restartIfCurrent(() => true)).resolves.toBe(true);
+  });
+});
+
+describe('whenEnded', () => {
+  it('resolves at once when no session is running or the session is not the target', async () => {
+    const { engine, created, onStatus } = setup();
+    await engine.whenEnded(() => true).ended;
+    await engine.initEngine(onStatus);
+    await engine.whenEnded((session) => session !== created[0]).ended;
+  });
+
+  it('resolves when the session is disposed, and when it is restarted', async () => {
+    const { engine, created, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    const ended = vi.fn();
+    void engine.whenEnded((session) => session === created[0]).ended.then(ended);
+    await Promise.resolve();
+    expect(ended).not.toHaveBeenCalled();
+    await engine.restartEngine(onStatus);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
+
+    const disposed = vi.fn();
+    void engine.whenEnded((session) => session === created[1]).ended.then(disposed);
+    await Promise.resolve();
+    expect(disposed).not.toHaveBeenCalled();
+    await engine.disposeEngine();
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('whenEnded: cancel', () => {
+  it('drops the wait: a cancelled waiter is not resolved by the end of the session', async () => {
+    const { engine, created, onStatus } = setup();
+    await engine.initEngine(onStatus);
+    const ended = vi.fn();
+    const wait = engine.whenEnded((session) => session === created[0]);
+    void wait.ended.then(ended);
+    wait.cancel();
+    await engine.disposeEngine();
+    await Promise.resolve();
+    expect(ended).not.toHaveBeenCalled();
+  });
+});

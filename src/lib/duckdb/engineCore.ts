@@ -52,8 +52,22 @@ export type EngineDeps<S extends EngineSession> = {
 
 export type Engine<S extends EngineSession> = {
   initEngine: (onStatus: (status: EngineStatus) => void) => Promise<void>;
-  /** Initialises again from scratch (new sources, new worker; the fetched files are kept). Does not wait for an initialisation that is stuck. */
-  restartEngine: (onStatus: (status: EngineStatus) => void) => Promise<void>;
+  /**
+   * Initialises again from scratch (new sources, new worker; the fetched files are kept). Does not wait for an
+   * initialisation that is stuck. Without `onStatus` it reports to the listener the page gave last.
+   */
+  restartEngine: (onStatus?: (status: EngineStatus) => void) => Promise<void>;
+  /**
+   * `restartEngine` for a query that is stuck: only when the running session is the one `isStuck` accepts. After a
+   * sign-out or a newer restart there is nothing to do (false): a late timeout must not touch the engine that
+   * replaced it. Reports to the listener the page gave last.
+   */
+  restartIfCurrent: (isStuck: (session: S) => boolean) => Promise<boolean>;
+  /**
+   * `ended` resolves when the running session that `isTarget` accepts ends (a restart or a dispose); at once when there
+   * is none. `cancel` drops the wait (call it when the waiter is done with the session).
+   */
+  whenEnded: (isTarget: (session: S) => boolean) => SessionEnd;
   /** Registers the views of these datasets (fetching each file once). */
   ensureViews: (ids: readonly string[]) => Promise<void>;
   /** The session of the running engine; waits for a start-up under way and rejects when the engine is not ready. */
@@ -63,6 +77,8 @@ export type Engine<S extends EngineSession> = {
   /** Stops everything under way, terminates the worker and forgets the fetched files and URLs (sign-out). */
   disposeEngine: () => Promise<void>;
 };
+
+export type SessionEnd = { ended: Promise<void>; cancel: () => void };
 
 /** State that belongs to one signed-in user: dropped at `disposeEngine`, so nothing of it reaches the next user. */
 type Owner<S> = { sourceStore: SourceStore; registry: ViewRegistry<S> };
@@ -90,6 +106,10 @@ export function createEngine<S extends EngineSession>(deps: EngineDeps<S>): Engi
   let initPromise: Promise<void> | undefined;
   let initMs: number | undefined;
   let readyStatus: EngineStatus | undefined;
+  // The page's listener, kept for a restart nobody on the page asked for (a stuck query); dropped with the user.
+  let listener: ((status: EngineStatus) => void) | undefined;
+  // Who waits for the end of a session (a query that must stop holding the queue when its worker is gone).
+  let endWaiters: { target: S; resolve: () => void }[] = [];
 
   function createOwner(): Owner<S> {
     const sourceStore = createSourceStore({ now: deps.now, fetchSources: deps.fetchSources });
@@ -198,10 +218,14 @@ export function createEngine<S extends EngineSession>(deps: EngineDeps<S>): Engi
     initPromise = undefined;
     readyStatus = undefined;
     oldRun?.stop('superseded', new Error(supersededMessage));
+    const ended = endWaiters.filter((waiter) => waiter.target === oldSession);
+    endWaiters = endWaiters.filter((waiter) => waiter.target !== oldSession);
+    for (const waiter of ended) waiter.resolve();
     await Promise.all([oldRun?.starting?.terminate().catch(ignore), oldSession?.terminate().catch(ignore)]);
   }
 
   function initEngine(onStatus: (status: EngineStatus) => void): Promise<void> {
+    listener = onStatus;
     if (initPromise !== undefined) {
       if (session !== undefined && readyStatus !== undefined) onStatus(readyStatus);
       return initPromise;
@@ -216,15 +240,39 @@ export function createEngine<S extends EngineSession>(deps: EngineDeps<S>): Engi
     return running;
   }
 
-  async function restartEngine(onStatus: (status: EngineStatus) => void): Promise<void> {
+  async function restartEngine(onStatus?: (status: EngineStatus) => void): Promise<void> {
+    const target = onStatus ?? listener ?? ignore;
     await abandon();
-    return initEngine(onStatus);
+    return initEngine(target);
+  }
+
+  function whenEnded(isTarget: (target: S) => boolean): SessionEnd {
+    const current = session;
+    if (current === undefined || !isTarget(current)) return { ended: Promise.resolve(), cancel: ignore };
+    let waiter: { target: S; resolve: () => void } | undefined;
+    const ended = new Promise<void>((resolve) => {
+      waiter = { target: current, resolve };
+      endWaiters.push(waiter);
+    });
+    return {
+      ended,
+      cancel: () => {
+        endWaiters = endWaiters.filter((entry) => entry !== waiter);
+      }
+    };
+  }
+
+  async function restartIfCurrent(isStuck: (stuck: S) => boolean): Promise<boolean> {
+    if (session === undefined || !isStuck(session)) return false;
+    await restartEngine().catch(ignore);
+    return true;
   }
 
   async function disposeEngine(): Promise<void> {
     const old = owner;
     owner = undefined;
     initMs = undefined;
+    listener = undefined;
     old?.registry.clear();
     old?.sourceStore.clear();
     await abandon();
@@ -233,6 +281,8 @@ export function createEngine<S extends EngineSession>(deps: EngineDeps<S>): Engi
   return {
     initEngine,
     restartEngine,
+    restartIfCurrent,
+    whenEnded,
     ensureViews: async (ids) => {
       // Not ready: reject before any file is fetched.
       const target = await getSession();

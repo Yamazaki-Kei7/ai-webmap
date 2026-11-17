@@ -254,7 +254,8 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 - wasm と各 Parquet は、`api.getDatasetSources()` が返す署名付き URL から取得します（許可リストのユーザーのみ）。署名付き URL は HEAD に 403 を返すので、ファイルは丸ごと `fetch` します。
 - 初期化のたびに URL を取り直します。遅延取得の前は、有効期限まで `urlConfig.refreshMarginSeconds` を切っていれば取り直し、403 なら一度だけ取り直して再試行します。
 - 設定は `engineConfig`（`shared/config.ts`）。`SET lock_configuration = true` で固定します。外部読み取りの防御は SQL ガード（`shared/sqlGuard.ts`）です。
-- 開発サーバー（`import.meta.env.DEV`）では `window.__aiWebmapEngine`（`ensureViews` / `count(id)` / `scalar(sql)`）で、UI なしにブラウザから確認できます。本番ビルドには入りません。
+- クエリは `queryLayer(sql)`（`geom` 列を GeoJSON のレイヤーにする）と `queryTable(sql, maxRows)`（表にする）で実行します。どちらも SQL ガードを通し、一度に 1 本ずつ流し、`queryConfig.timeoutMs` でキャンセルします（止まらなければワーカーを作り直します）。結果とエラーは `ClientToolResult`（`shared/toolProtocol.ts`）で返します。
+- 開発サーバー（`import.meta.env.DEV`）では `window.__aiWebmapEngine`（`ensureViews` / `count(id)` / `scalar(sql)` / `queryLayer` / `queryTable`）で、UI なしにブラウザから確認できます。本番ビルドには入りません。
 
 ## スタック名
 

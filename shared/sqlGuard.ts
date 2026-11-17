@@ -94,6 +94,7 @@ const allowedFunctionSet = new Set([...allowedFunctions, ...parenthesisKeywords]
 
 const messages = {
   empty: 'The SQL is empty.',
+  parentheses: 'Parentheses are not balanced.',
   oneStatement: 'Only one SELECT or WITH statement is allowed.',
   startWord: 'The statement must start with SELECT or WITH.',
   unterminatedComment: 'The SQL has a comment that is not closed.',
@@ -250,6 +251,18 @@ function hasOnlyOneStatement(code: readonly Token[]): boolean {
   return code.every((token, index) => !isSemicolon(token) || index === code.length - 1);
 }
 
+/** `(` and `)` pair up: the depth never goes below zero and ends at zero (so the SQL cannot close a wrapper around it). */
+function hasBalancedParentheses(code: readonly Token[]): boolean {
+  let depth = 0;
+  for (const token of code) {
+    if (token.kind !== 'punct') continue;
+    if (token.value === '(') depth += 1;
+    if (token.value === ')') depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
 function findForbiddenKeyword(code: readonly Token[]): string | null {
   for (const [index, token] of code.entries()) {
     if (token.kind !== 'word') continue;
@@ -347,6 +360,7 @@ export function validateSql(sql: string, knownTables: readonly string[]): SqlGua
 
   if (!hasOnlyOneStatement(code)) return deny(messages.oneStatement);
   if (!isWord(code[0], 'SELECT') && !isWord(code[0], 'WITH')) return deny(messages.startWord);
+  if (!hasBalancedParentheses(code)) return deny(messages.parentheses);
 
   const keyword = findForbiddenKeyword(code);
   if (keyword !== null) return deny(`The keyword ${keyword} is not allowed.`);

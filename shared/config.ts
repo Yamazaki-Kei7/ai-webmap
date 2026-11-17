@@ -18,7 +18,9 @@ export const queryConfig = {
   /** Maximum rows returned by `runQuery`. */
   maxRows: 50,
   /** Longest SQL text (characters) the SQL guard accepts. */
-  maxSqlChars: 10_000
+  maxSqlChars: 10_000,
+  /** Longest DuckDB error text (characters) a query answers to the agent. */
+  maxErrorChars: 300
 } as const;
 
 export const resultConfig = {

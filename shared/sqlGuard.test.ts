@@ -293,6 +293,25 @@ describe('validateSql: statement shape', () => {
   });
 });
 
+describe('validateSql: parentheses', () => {
+  const unbalanced = [
+    'SELECT pref_name, geom FROM prefectures) AS q, (SELECT 1 AS one',
+    'SELECT (1',
+    'SELECT 1)',
+    'SELECT ((1)',
+    'SELECT 1 FROM (SELECT 2))'
+  ];
+
+  it.each(unbalanced)('rejects %s', (sql) => {
+    expect(rejectionReason(sql)).toBe('Parentheses are not balanced.');
+  });
+
+  it('accepts balanced nesting, and parentheses inside strings and quoted names', () => {
+    expect(validateSql("SELECT ((1 + 2) * (3)) AS x FROM (SELECT 1) AS a, (SELECT (2)) AS b", datasetIds).ok).toBe(true);
+    expect(validateSql("SELECT ')' AS a, '(' AS b, 1 AS \"c)\"", datasetIds).ok).toBe(true);
+  });
+});
+
 describe('validateSql: forbidden function names (second layer)', () => {
   const prefixExamples = forbiddenFunctionAffixes.prefixes.map((prefix) => `${prefix}something`);
   const suffixExamples = forbiddenFunctionAffixes.suffixes.map((suffix) => `something${suffix}`);
