@@ -66,9 +66,10 @@ export type SaveMapDeps = {
  * Creates a map (no `mapId`) or replaces one of the caller's (`mapId`; a map that is not the caller's, or does not exist,
  * is a 404). A new map is refused (409) when the caller already has `mapsConfig.maxMapsPerUser`: the count is read before the
  * write, so simultaneous creates may overshoot it by up to their number less one (it is a cost cap; no counter item is kept).
- * An update never counts against the limit. An update writes only if the record still has the `updatedAt` it was read with,
- * so it can neither bring back a map deleted meanwhile nor silently overwrite a newer save: either is a 409. The read itself
- * may be eventually consistent (on AWS the block offers no consistent read), so a map made a moment ago may answer 404 once.
+ * An update never counts against the limit. An update writes only if the record still has the `expectedUpdatedAt` the caller
+ * gives (the version it saved or opened last), so it can neither bring back a map deleted meanwhile nor replace a save it has
+ * not seen: either is a 409. The version read here is not compared: the read may be stale (on AWS the block offers no
+ * consistent read, so a map made a moment ago may answer 404 once), and it says nothing of what the caller has seen.
  */
 export async function saveMapRecord(
   table: MapsTable,
@@ -76,14 +77,17 @@ export async function saveMapRecord(
   input: CheckedSaveMap,
   { now, newMapId }: SaveMapDeps
 ): Promise<{ mapId: string; updatedAt: number }> {
-  const updatedAt = now();
   const conversation = input.conversationId === undefined ? {} : { conversationId: input.conversationId };
   if (input.mapId !== undefined) {
     const existing = await table.get({ userId, mapId: input.mapId });
     if (existing === null) throw notFound();
+    if (input.expectedUpdatedAt === undefined) throw new ApiError('An update needs expectedUpdatedAt', mapsStatus.badRequest, { name: mapsErrors.InvalidRequest });
+    // The version only grows (the next update names it): a clock that has not moved since the version it replaces must not repeat it.
+    const updatedAt = Math.max(now(), input.expectedUpdatedAt + 1);
     const record: MapRecord = { userId, mapId: input.mapId, title: input.title, state: input.stateJson, ...conversation, createdAt: existing.createdAt, updatedAt };
     try {
-      await table.put(record, { ifFieldEquals: { updatedAt: existing.updatedAt } });
+      // The version the caller saw, not the one just read: the read may be stale (eventually consistent) and says nothing of what the caller has seen.
+      await table.put(record, { ifFieldEquals: { updatedAt: input.expectedUpdatedAt } });
     } catch (error) {
       if (error instanceof Error && isConditionFailure(error)) {
         throw new ApiError(mapConflictMessage, mapsStatus.conflict, { name: mapsErrors.Conflict });
@@ -95,6 +99,7 @@ export async function saveMapRecord(
   if ((await recordsOf(table, userId)).length >= mapsConfig.maxMapsPerUser) {
     throw new ApiError(mapLimitReachedMessage, mapsStatus.conflict, { name: mapsErrors.LimitReached });
   }
+  const updatedAt = now();
   const mapId = newMapId();
   // A fresh id: an existing record (a clash, which a random id does not make) must never be overwritten.
   await table.put({ userId, mapId, title: input.title, state: input.stateJson, ...conversation, createdAt: updatedAt, updatedAt }, { ifNotExists: true });

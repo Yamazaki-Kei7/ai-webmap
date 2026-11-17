@@ -4,14 +4,25 @@
   import { authApi } from 'aws-blocks';
   import { AccountMenuBar } from '@aws-blocks/blocks/ui';
   import { mountNode } from '$lib/mountNode';
-  import { restartEngine, type EngineStatus } from '$lib/duckdb/engine';
+  import { bindChatToUser } from '$lib/chat/chatBinding.svelte';
+  import { chatApi } from '$lib/chat/chatApi';
+  import { createChatSession } from '$lib/chat/chatSession.svelte';
+  import { createClientToolExecutor } from '$lib/chat/clientTools';
+  import { createConversationStore } from '$lib/chat/conversationStore';
+  import { createMapView } from '$lib/chat/mapView';
+  import { queryLayer, restartEngine, type EngineStatus } from '$lib/duckdb/engine';
   import { runEngine } from '$lib/duckdb/engineEffect.svelte';
   import { isRetryableMessage } from '$lib/duckdb/errors';
+  import { mapsApi } from '$lib/map/mapsApi';
+  import { summarizeForLlm } from '$lib/map/mapState.svelte';
+  import { restoreMap, restoreProgress } from '$lib/map/persist.svelte';
+  import { createMapFlow } from '$lib/map/savedMapFlow.svelte';
   import { chatConfig } from '../../../shared/config';
   import DataAttribution from './DataAttribution.svelte';
   import ChatPanel from './ChatPanel.svelte';
   import DevPanel from './DevPanel.svelte';
   import LayerPanel from './LayerPanel.svelte';
+  import MapBar from './MapBar.svelte';
   import MapView from './MapView.svelte';
   import { narrowViewport } from './narrowViewport';
 
@@ -34,6 +45,34 @@
 
   const retryEngine = (): void => runEngine(restartEngine, setStatus);
 
+  // One chat session per signed-in user: another user, or signing out, drops it. The shell owns it, because saving and opening a map reach it.
+  const store = createConversationStore(() => sessionStorage);
+  const binding = bindChatToUser({
+    getOwner: () => owner,
+    createSession: (name) => createChatSession({ api: chatApi, owner: name, store, executor: createClientToolExecutor(() => map), mapContext: summarizeForLlm })
+  });
+  const session = $derived(binding.session);
+  if (import.meta.env.DEV) {
+    // Browser checks reach the session (`openConversation`) through this.
+    $effect(() => {
+      window.__aiWebmapChat = session;
+      return () => {
+        window.__aiWebmapChat = undefined;
+      };
+    });
+  }
+
+  // The map may not exist yet (it mounts with the shell): the view is kept in the state either way.
+  const jumpTo = (center: [number, number], zoom: number): void => {
+    if (map) createMapView(() => map).jumpTo(center, zoom);
+  };
+  const flow = createMapFlow({
+    api: mapsApi,
+    chat: () => session,
+    restore: (state) => restoreMap(state, { queryLayer, jumpTo }),
+    jumpTo
+  });
+
   // MapLibre's own attribution sits at the bottom right (two lines when opened on a narrow map). Where it reaches under the left
   // column, the data attribution is lifted above it, so that the two never cover each other; elsewhere it stays at the bottom edge.
   let leftColumn: HTMLElement | undefined = $state();
@@ -55,8 +94,12 @@
 </script>
 
 <div class="flex h-dvh flex-col">
-  <header class="flex items-center gap-4 border-b border-bb-border bg-bb-surface px-4 py-2">
+  <header class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-bb-border bg-bb-surface px-4 py-2">
     <h1 class="text-lg font-bold">{title}</h1>
+    <!-- Narrow: the map's controls take a row of their own, under the title and the account menu. -->
+    <div class={narrowViewport.current ? 'order-last basis-full' : ''}>
+      <MapBar {flow} engineReady={engineStatus.state === 'ready'} />
+    </div>
     <p class="min-w-0 flex-1 truncate text-sm text-bb-muted" data-testid="engine-status">
       {#if engineStatus.state === 'loading'}
         データエンジン: 準備中（{engineStatus.step}）
@@ -119,7 +162,7 @@
       </button>
       <!-- Hidden, not removed, when closed: the conversation lives in the chat panel. -->
       <div class={dockOpen ? '' : 'hidden'}>
-        <ChatPanel {engineStatus} {map} {owner} onRetry={retryEngine} />
+        <ChatPanel {engineStatus} {session} {owner} restoring={restoreProgress.current} onRetry={retryEngine} />
       </div>
     </aside>
   </div>

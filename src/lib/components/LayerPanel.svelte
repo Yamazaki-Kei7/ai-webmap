@@ -2,6 +2,8 @@
   import type { Snippet } from 'svelte';
   import { inTopDownOrder } from '$lib/map/drawOrder';
   import { mapState } from '$lib/map/mapState.svelte';
+  import { restoreProgress } from '$lib/map/persist.svelte';
+  import { restoreProgressText, restoreSummaryText } from '$lib/map/savedMaps';
   import LayerCard from './LayerCard.svelte';
   import { narrowViewport } from './narrowViewport';
   import { panelBodyId, panelHeadingId } from './panelIds';
@@ -16,6 +18,10 @@
   let chosenOpen = $state<boolean | undefined>(undefined);
   const narrow = $derived(narrowViewport.current);
   const open = $derived(!narrow || (chosenOpen ?? false));
+
+  // While a saved map is rebuilt: how far it is. Afterwards: how many layers stayed behind (they are error layers, until removed).
+  const progress = $derived(restoreProgress.current);
+  const summary = $derived(restoreSummaryText(mapState.layers.filter((layer) => layer.status === 'error').length));
 </script>
 
 <aside
@@ -41,6 +47,11 @@
       </button>
     {/if}
   </div>
+  {#if progress}
+    <p class="px-3 pb-2 text-xs text-bb-muted" role="status" data-testid="restore-progress">{restoreProgressText(progress)}</p>
+  {:else if summary}
+    <p class="px-3 pb-2 text-xs text-bb-danger" role="status" data-testid="restore-summary">{summary}</p>
+  {/if}
   {#if open}
     <div id={panelBodyId} class="flex min-h-0 flex-col gap-3 overflow-y-auto border-t border-bb-border p-3" data-testid="layer-panel-body">
       {@render children?.()}

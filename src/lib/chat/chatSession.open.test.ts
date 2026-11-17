@@ -102,6 +102,16 @@ describe('openConversation', () => {
     session.dispose();
   });
 
+  it('names the conversation it is in (a saved map keeps it): none before a message, the opened one after, none after a reset', async () => {
+    const { session } = setup();
+    expect(session.conversationId).toBeNull();
+    expect(await session.openConversation(savedId)).toBe('opened');
+    expect(session.conversationId).toBe(savedId);
+    session.reset();
+    expect(session.conversationId).toBeNull();
+    session.dispose();
+  });
+
   it('answers what it left pending SESSION_RESET, without running the calls', async () => {
     const { session, executor, resumes } = setup({
       pending: [
@@ -156,7 +166,7 @@ describe('openConversation', () => {
 
     it('says so in Japanese and stays on an empty, new conversation', async () => {
       const { session, store, streams, created } = setup({ getConversation: notFound });
-      await session.openConversation(savedId);
+      expect(await session.openConversation(savedId)).toBe('notFound');
       expect(session.error).toBe(chatConfig.text.restoreNotFound);
       expect(session.messages).toEqual([]);
       expect(session.isLoading).toBe(false);
@@ -170,7 +180,7 @@ describe('openConversation', () => {
 
     it('does the same for the other failures, with the message of the error name', async () => {
       const { session } = setup({ getConversation: () => Promise.reject(Object.assign(new Error('Failed to fetch'), { name: 'TypeError' })) });
-      await session.openConversation(savedId);
+      expect(await session.openConversation(savedId)).toBe('failed');
       expect(session.error).toBe(chatConfig.text.errors.TypeError);
       expect(session.messages).toEqual([]);
       session.dispose();

@@ -7,6 +7,7 @@
   import { bindEngineToUser } from '$lib/duckdb/engineEffect.svelte';
   import AppShell from '$lib/components/AppShell.svelte';
   import { resetMapState } from '$lib/map/mapState.svelte';
+  import { clearCurrentMap } from '$lib/map/savedMapFlow.svelte';
   import type { Map as MaplibreMap } from 'maplibre-gl';
 
   type AuthUser = Parameters<Parameters<typeof onAuthChange>[1]>[0];
@@ -21,11 +22,14 @@
   // The data engine runs for the signed-in user; sign-out or another user drops its worker and the fetched data.
   bindEngineToUser({ getUser: () => user, initEngine, disposeEngine, setStatus });
 
-  // Signing out (or another user signing in) leaves no layer of the previous user behind.
+  // Signing out (or another user signing in) leaves no layer, and no saved map being shown, of the previous user behind.
   const owner = $derived(user?.username ?? null);
   $effect(() => {
     void owner;
-    return resetMapState;
+    return () => {
+      resetMapState();
+      clearCurrentMap();
+    };
   });
 
   // Browser-check helpers; the guard removes the import from the production build.

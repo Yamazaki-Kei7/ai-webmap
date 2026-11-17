@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { LngLatLike } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
 import { layerIdPattern } from './mapSpec';
+import { mapsErrors } from './maps';
 import { toolErrorCodeSchema } from './toolProtocol';
 import {
   agentConfig,
@@ -9,6 +10,7 @@ import {
   dataConfig,
   engineConfig,
   mapConfig,
+  mapsConfig,
   promptConfig,
   queryConfig,
   resultConfig,
@@ -146,6 +148,24 @@ describe('config invariants', () => {
       expect(delay).toBeGreaterThan(0);
       if (index > 0) expect(delay).toBeGreaterThan(delays[index - 1]);
     });
+  });
+
+  it('has a Japanese message for each failure of the saved-maps API the UI names, and a generic one for the rest', () => {
+    const { save, open, remove, list } = mapsConfig.text.errors;
+    for (const name of [mapsErrors.Conflict, mapsErrors.LimitReached, mapsErrors.InvalidRequest, mapsErrors.NotFound]) expect(save[name], name).toMatch(/\S/);
+    for (const name of [mapsErrors.NotFound, mapsErrors.Corrupt]) expect(open[name], name).toMatch(/\S/);
+    expect(remove[mapsErrors.NotFound]).toMatch(/\S/);
+    for (const messages of [save, open, remove, list]) expect(messages.generic).toMatch(/\S/);
+    // Never an English server message, and never the schema's.
+    for (const message of [...Object.values(save), ...Object.values(open), ...Object.values(remove), ...Object.values(list)]) expect(message).toMatch(/[\u3040-\u30ff\u4e00-\u9fff]/);
+  });
+
+  it('counts a small pan or zoom as no change to a saved map, but not a move across the screen', () => {
+    const { zoomLevels, centerTiles } = mapsConfig.unsavedViewChange;
+    expect(zoomLevels).toBeGreaterThan(0);
+    expect(zoomLevels).toBeLessThanOrEqual(1);
+    expect(centerTiles).toBeGreaterThan(0);
+    expect(mapsConfig.noticeMs).toBeGreaterThan(0);
   });
 
   it('draws a feature without a number smaller than the smallest proportional symbol', () => {

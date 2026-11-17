@@ -21,11 +21,15 @@ describe('inputBlock', () => {
     expect(inputBlock('loading', true)).toBe('loading');
     expect(inputBlock('failed', false)).toBe('failed');
     expect(inputBlock('denied', false)).toBe('denied');
+    expect(inputBlock('ready', false, true)).toBe('restoring');
+    expect(inputBlock('ready', true, true)).toBe('restoring');
+    expect(inputBlock('loading', false, true)).toBe('loading');
   });
 
   it('gives a reason line for loading and busy; the failure and the refusal are shown as banners', () => {
     expect(inputBlockText('loading')).toBe('データエンジンを準備しています');
     expect(inputBlockText('busy')).toBe(chatConfig.text.working);
+    expect(inputBlockText('restoring', { done: 1, total: 3 })).toBe('地図を復元しています（1/3）');
     expect(inputBlockText('failed')).toBeNull();
     expect(inputBlockText('denied')).toBeNull();
   });

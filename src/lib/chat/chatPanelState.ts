@@ -2,6 +2,7 @@ import { chatConfig } from '../../../shared/config';
 import type { ToolErrorCode, ToolName } from '../../../shared/toolProtocol';
 import type { EngineStatus } from '../duckdb/engineCore';
 import { notAllowedUiMessage } from '../duckdb/errors';
+import { restoreProgressText } from '../map/savedMaps';
 
 /** What the chat panel needs of the data engine: whether it can be used, is coming, or is out of reach (and for whom the retry is no help). */
 export type ChatEngineState = 'ready' | 'loading' | 'failed' | 'denied';
@@ -19,21 +20,24 @@ export function chatEngineState(status: EngineStatus): ChatEngineState {
 }
 
 /** Why the input is disabled, or null when it is not. */
-export type InputBlock = 'denied' | 'failed' | 'loading' | 'busy';
+export type InputBlock = 'denied' | 'failed' | 'loading' | 'restoring' | 'busy';
 
-/** The reason the chat cannot take a message now: the engine first (nothing works without it), then the running turn. */
-export function inputBlock(engine: ChatEngineState, busy: boolean): InputBlock | null {
+/** The reason the chat cannot take a message now: the engine first (nothing works without it), then a map being rebuilt (the conversation is about it), then the running turn. */
+export function inputBlock(engine: ChatEngineState, busy: boolean, restoring = false): InputBlock | null {
   if (engine !== 'ready') return engine;
+  if (restoring) return 'restoring';
   return busy ? 'busy' : null;
 }
 
-/** The line shown with a disabled input; the failure and the refusal have their own banner. */
-export function inputBlockText(block: InputBlock): string | null {
+/** The line shown with a disabled input (`progress`: how far the map being rebuilt is); the failure and the refusal have their own banner. */
+export function inputBlockText(block: InputBlock, progress?: { done: number; total: number } | null): string | null {
   switch (block) {
     case 'loading':
       return chatConfig.text.engineLoading;
     case 'busy':
       return chatConfig.text.working;
+    case 'restoring':
+      return progress ? restoreProgressText(progress) : null;
     case 'denied':
     case 'failed':
       return null;

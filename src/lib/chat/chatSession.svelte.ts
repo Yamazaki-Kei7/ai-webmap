@@ -25,6 +25,8 @@ import type { ToolExecutor } from './toolExecutor';
 /** A message of the conversation as the panel shows it (no tool, interrupt or approval rows). */
 export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string };
 
+export type OpenConversationResult = 'opened' | 'notFound' | 'failed';
+
 /** `code` is why a failed call failed (the code of the result the model is given). */
 export type ToolActivity = { id: string; tool: ToolName; state: 'running' | 'done' | 'failed'; code?: ToolErrorCode };
 
@@ -35,15 +37,18 @@ export interface ChatSession {
   /** The tool calls of the current turn, each once (the interrupt id is the tool call's identity). */
   readonly activity: ToolActivity[];
   readonly error: string | null;
+  /** The id of the current conversation (it exists once a message was sent, or a saved one was opened), else null: a saved map keeps it. */
+  readonly conversationId: string | null;
   send(text: string): Promise<void>;
   /** A new conversation: the open turn is abandoned and its pending tool calls answered `SESSION_RESET`. */
   reset(): void;
   /**
    * Continues a saved conversation: its history is shown, it becomes the current one (and the stored one), and what it left
    * pending is answered `SESSION_RESET` (the map was rebuilt from its SQL, not from those calls). When it cannot be opened
-   * (gone, or not the user's) the chat stays on a new conversation and `error` says so.
+   * (gone, or not the user's) the chat stays on a new conversation and `error` says so. Says how it went: `notFound` is the
+   * conversation being gone for good, `failed` any other reason (the connection, a later opening taking over): it may still exist.
    */
-  openConversation(conversationId: string): Promise<void>;
+  openConversation(conversationId: string): Promise<OpenConversationResult>;
   /** Closes the subscriptions (when the panel goes away). */
   dispose(): void;
 }
@@ -326,6 +331,9 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     get error() {
       return error;
     },
+    get conversationId() {
+      return current.chat.getConversationId();
+    },
     async send(text) {
       const message = text.trim();
       if (message === '' || loading || disposed) return;
@@ -359,18 +367,18 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
       }
     },
     async openConversation(conversationId) {
-      if (disposed) return;
+      if (disposed) return 'failed';
       const opening = ++openings;
       // Busy while it loads: nothing is sent to the conversation that is being left, or to this one before it is whole.
       loading = true;
       await replaceConversation();
-      if (opening !== openings || disposed) return;
+      if (opening !== openings || disposed) return 'failed';
       error = null;
       const conversation = current;
       conversation.restoring = true;
       try {
         await conversation.chat.loadConversation(conversationId);
-        if (opening !== openings) return;
+        if (opening !== openings) return 'failed';
         conversation.restoring = false;
         deps.store.write({ owner: deps.owner, conversationId });
         // What it left pending belongs to a map that is gone: answered, and when that fails the next `send` settles it.
@@ -378,12 +386,15 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
           conversation.unsettled = true;
           conversation.reopened = true;
         }
+        return 'opened';
       } catch (failure) {
-        if (opening !== openings) return;
+        if (opening !== openings) return 'failed';
         // The chat is bound to the conversation it failed to load: it is left for a new one.
         await replaceConversation();
-        if (failure instanceof Error) error = failure.name === conversationErrors.NotFound ? chatConfig.text.restoreNotFound : describeError(failure);
+        const gone = failure instanceof Error && failure.name === conversationErrors.NotFound;
+        if (failure instanceof Error) error = gone ? chatConfig.text.restoreNotFound : describeError(failure);
         else error = chatConfig.text.errorGeneric;
+        return gone ? 'notFound' : 'failed';
       } finally {
         if (opening === openings) loading = false;
       }

@@ -317,6 +317,22 @@ describe('restoreMap', () => {
     });
   });
 
+  describe('a layer added while a restore of a map with a low next layer number runs', () => {
+    it('gets an id above every saved id, though the saved next layer number is 1', async () => {
+      const saved = { ...savedState(), nextLayerSeq: 1 };
+      let stray: LayerState | undefined;
+      const queryLayer: Query = async (sql) => {
+        // A tool call that was already running adds its layer while the saved layers (L1, L2, L4) are still being rebuilt.
+        if (sql === 'SELECT 1') stray = placed({ name: 'stray', sql: 'SELECT 5' });
+        return { ok: true, data: data() };
+      };
+      await restoreMap(saved, { queryLayer, jumpTo: () => undefined });
+      expect(stray?.id).toBe('L5');
+      expect(layerIds().sort()).toEqual(['L1', 'L2', 'L4', 'L5']);
+      expect(mapState.nextLayerSeq).toBe(6);
+    });
+  });
+
   describe('a second restore while one runs', () => {
     it('cancels the earlier one: it adds nothing more, and the map holds the later one', async () => {
       let release: () => void = () => undefined;

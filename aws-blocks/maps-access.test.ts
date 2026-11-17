@@ -142,7 +142,7 @@ describe('saveMapRecord', () => {
   it('updates the caller\'s map: new title, state and time, the creation time kept; an update is not counted against the limit', async () => {
     const full = Array.from({ length: mapsConfig.maxMapsPerUser }, (_, n) => record('alice', `m${n}`, n, { createdAt: 5 }));
     const { table, rows } = fakeTable(full);
-    const result = await saveMapRecord(table, 'alice', checked({ mapId: 'm3', title: 'Renamed' }), deps);
+    const result = await saveMapRecord(table, 'alice', checked({ mapId: 'm3', title: 'Renamed', expectedUpdatedAt: 3 }), deps);
     expect(result).toEqual({ mapId: 'm3', updatedAt: 1_000 });
     expect(rows.get('alice/m3')).toMatchObject({ title: 'Renamed', createdAt: 5, updatedAt: 1_000 });
     expect(rows.size).toBe(mapsConfig.maxMapsPerUser);
@@ -163,7 +163,7 @@ describe('saveMapRecord: an update that races another request', () => {
   it('is a 409 with a name, and does not bring back a map deleted between its read and its write', async () => {
     const { table, rows, hooks } = fakeTable([record('alice', 'm1', 5)]);
     hooks.afterGet = () => rows.delete('alice/m1');
-    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1' }), deps));
+    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1', expectedUpdatedAt: 5 }), deps));
     expect([error.status, error.name]).toEqual([mapsStatus.conflict, mapsErrors.Conflict]);
     expect(rows.size).toBe(0);
   });
@@ -171,15 +171,48 @@ describe('saveMapRecord: an update that races another request', () => {
   it('is a 409 and keeps the newer save when another save got in between', async () => {
     const { table, rows, hooks } = fakeTable([record('alice', 'm1', 5)]);
     hooks.afterGet = () => rows.set('alice/m1', record('alice', 'm1', 9, { title: 'Newer' }));
-    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1' }), deps));
+    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1', expectedUpdatedAt: 5 }), deps));
     expect([error.status, error.name]).toEqual([mapsStatus.conflict, mapsErrors.Conflict]);
     expect(rows.get('alice/m1')).toMatchObject({ title: 'Newer', updatedAt: 9 });
+  });
+
+  it('is a 409 when the version the caller saw is not the stored one, though the read is current, and keeps the newer save', async () => {
+    const { table, rows } = fakeTable([record('alice', 'm1', 9, { title: 'Newer' })]);
+    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1', title: 'Stale', expectedUpdatedAt: 5 }), deps));
+    expect([error.status, error.name]).toEqual([mapsStatus.conflict, mapsErrors.Conflict]);
+    expect(rows.get('alice/m1')).toMatchObject({ title: 'Newer', updatedAt: 9 });
+  });
+
+  it('updates when the version the caller saw is the stored one, and the next update must name the new version', async () => {
+    const { table, rows } = fakeTable([record('alice', 'm1', 5)]);
+    await saveMapRecord(table, 'alice', checked({ mapId: 'm1', title: 'v2', expectedUpdatedAt: 5 }), deps);
+    expect(rows.get('alice/m1')).toMatchObject({ title: 'v2', updatedAt: 1_000 });
+    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1', title: 'again with v1', expectedUpdatedAt: 5 }), { ...deps, now: () => 2_000 }));
+    expect(error.name).toBe(mapsErrors.Conflict);
+    expect(rows.get('alice/m1')).toMatchObject({ title: 'v2', updatedAt: 1_000 });
+  });
+
+  it('gives an update a version above the one it replaces, though the clock has not moved past it', async () => {
+    const { table, rows } = fakeTable([record('alice', 'm1', 5_000)]);
+    const result = await saveMapRecord(table, 'alice', checked({ mapId: 'm1', expectedUpdatedAt: 5_000 }), { ...deps, now: () => 1_000 });
+    expect(result.updatedAt).toBe(5_001);
+    expect(rows.get('alice/m1')?.updatedAt).toBe(5_001);
+    const later = await saveMapRecord(table, 'alice', checked({ mapId: 'm1', expectedUpdatedAt: 5_001 }), { ...deps, now: () => 9_000 });
+    expect(later.updatedAt).toBe(9_000);
+  });
+
+  it('refuses an update without a version (400), and writes nothing', async () => {
+    const { table, rows, calls } = fakeTable([record('alice', 'm1', 5)]);
+    const error = await rejection(saveMapRecord(table, 'alice', checked({ mapId: 'm1' }), deps));
+    expect([error.status, error.name]).toEqual([mapsStatus.badRequest, mapsErrors.InvalidRequest]);
+    expect(calls.filter((call) => call.startsWith('put'))).toEqual([]);
+    expect(rows.get('alice/m1')?.updatedAt).toBe(5);
   });
 
   it('lets a failure that is not a failed condition through unchanged, and keeps the record', async () => {
     const { table, rows } = fakeTable([record('alice', 'm1', 5)]);
     const failing: MapsTable = { ...table, put: async () => { throw new TypeError('network'); } };
-    await expect(saveMapRecord(failing, 'alice', checked({ mapId: 'm1' }), deps)).rejects.toBeInstanceOf(TypeError);
+    await expect(saveMapRecord(failing, 'alice', checked({ mapId: 'm1', expectedUpdatedAt: 5 }), deps)).rejects.toBeInstanceOf(TypeError);
     expect(rows.get('alice/m1')?.updatedAt).toBe(5);
   });
 });

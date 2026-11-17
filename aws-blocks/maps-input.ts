@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { mapsConfig } from '../shared/config.js';
 import { datasetIds } from '../shared/datasets.js';
 import { mapIdSchema, mapTitleSchema, persistedMapStateSchema, type PersistedMapState } from '../shared/persistedMap.js';
+import { sqlNotAllowedMessage } from '../shared/maps.js';
 import { validateSql } from '../shared/sqlGuard.js';
 import type { Checked } from './conversation-input.js';
 
@@ -16,7 +17,17 @@ export const checkMapId = (value: string): Checked<string> => {
 };
 
 /** What `saveMap` takes. */
-export type SaveMapInput = { mapId?: string; title: string; state: PersistedMapState; conversationId?: string };
+export type SaveMapInput = {
+  mapId?: string;
+  title: string;
+  state: PersistedMapState;
+  conversationId?: string;
+  /**
+   * The `updatedAt` of the version the caller saved or opened last. An update (a `mapId`) needs it and a new map must not
+   * have it: the update only lands on that version, else it is a 409 (no save silently replaces a newer one).
+   */
+  expectedUpdatedAt?: number;
+};
 
 /** A `saveMap` input that passed: the state is as stored (`stateJson` is its JSON, the string that is kept). */
 export type CheckedSaveMap = {
@@ -25,6 +36,7 @@ export type CheckedSaveMap = {
   state: PersistedMapState;
   stateJson: string;
   conversationId?: string;
+  expectedUpdatedAt?: number;
 };
 
 // The state is checked as a whole (the bounds of the layers and the size are in the schema and below). The conversation id's
@@ -33,7 +45,8 @@ const saveMapSchema = z.object({
   conversationId: z.uuid().optional(),
   mapId: mapIdSchema.optional(),
   title: mapTitleSchema,
-  state: persistedMapStateSchema
+  state: persistedMapStateSchema,
+  expectedUpdatedAt: z.number().int().nonnegative().optional()
 });
 
 const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
@@ -43,6 +56,7 @@ function messageOf(issue: z.core.$ZodIssue): string {
   const [argument, part] = issue.path;
   if (argument === 'mapId') return 'Invalid map id';
   if (argument === 'conversationId') return 'Invalid conversation id';
+  if (argument === 'expectedUpdatedAt') return 'Invalid expectedUpdatedAt';
   if (argument === 'title') return `The title must be ${mapsConfig.title.minChars} to ${mapsConfig.title.maxChars} characters`;
   if (argument === 'state' && part === 'layers' && issue.path.length === 2 && issue.code === 'too_big') {
     return `A map has at most ${mapsConfig.maxLayers} layers`;
@@ -54,9 +68,12 @@ function messageOf(issue: z.core.$ZodIssue): string {
 export function checkSaveMap(value: SaveMapInput): Checked<CheckedSaveMap> {
   const parsed = saveMapSchema.safeParse(value);
   if (!parsed.success) return { ok: false, message: messageOf(parsed.error.issues[0]) };
+  // The version belongs to an update: without it the write could replace a newer save unseen, and a new map has none.
+  if (parsed.data.mapId !== undefined && parsed.data.expectedUpdatedAt === undefined) return { ok: false, message: 'An update needs expectedUpdatedAt' };
+  if (parsed.data.mapId === undefined && parsed.data.expectedUpdatedAt !== undefined) return { ok: false, message: 'A new map has no expectedUpdatedAt' };
   // The browser guards each SQL again when it restores the map; this is early feedback, and keeps what no restore could run out of the store.
   const rejected = parsed.data.state.layers.find(({ sql }) => !validateSql(sql, datasetIds).ok);
-  if (rejected) return { ok: false, message: `The SQL of layer ${rejected.id} is not allowed` };
+  if (rejected) return { ok: false, message: sqlNotAllowedMessage(rejected.id) };
   const stateJson = JSON.stringify(parsed.data.state);
   if (utf8Bytes(stateJson) > mapsConfig.maxStateBytes) return { ok: false, message: 'The map is too large' };
   return { ok: true, value: { ...parsed.data, stateJson } };

@@ -29,3 +29,14 @@ export const mapNotFoundMessage = 'Map not found';
 export const mapConflictMessage = 'The map was changed elsewhere';
 export const mapLimitReachedMessage = 'Too many saved maps';
 export const mapCorruptMessage = 'The saved map cannot be read';
+
+/**
+ * The 400 for a layer whose SQL the guard rejects names the layer. The API error carries only a name and a status, so the
+ * id travels in the message, in this one format: the backend writes it and the browser reads it with the two functions below.
+ */
+export const sqlNotAllowedMessage = (layerId: string): string => `The SQL of layer ${layerId} is not allowed`;
+
+const sqlNotAllowedPattern = /^The SQL of layer (L\d+) is not allowed$/;
+
+/** The layer a `sqlNotAllowedMessage` names, or undefined for any other message. */
+export const layerIdOfSqlNotAllowed = (message: string): string | undefined => sqlNotAllowedPattern.exec(message)?.[1];

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mapsConfig, queryConfig } from '../shared/config';
 import type { PersistedMapState } from '../shared/persistedMap';
+import { layerIdOfSqlNotAllowed } from '../shared/maps';
 import { checkMapId, checkSaveMap, type SaveMapInput } from './maps-input';
 
 const layer = (n: number, sql = 'SELECT 1'): PersistedMapState['layers'][number] => ({
@@ -28,8 +29,19 @@ function failure(value: SaveMapInput): string {
 
 describe('checkSaveMap', () => {
   it('passes a valid input, with the state as the JSON that is stored', () => {
-    const checked = checkSaveMap({ ...input, mapId, conversationId });
-    expect(checked).toEqual({ ok: true, value: { mapId, title: 'My map', state, stateJson: JSON.stringify(state), conversationId } });
+    const checked = checkSaveMap({ ...input, mapId, conversationId, expectedUpdatedAt: 1_700 });
+    expect(checked).toEqual({ ok: true, value: { mapId, title: 'My map', state, stateJson: JSON.stringify(state), conversationId, expectedUpdatedAt: 1_700 } });
+  });
+
+  it('needs the version for an update, and refuses one for a new map', () => {
+    expect(failure({ ...input, mapId })).toBe('An update needs expectedUpdatedAt');
+    expect(failure({ ...input, expectedUpdatedAt: 5 })).toBe('A new map has no expectedUpdatedAt');
+  });
+
+  it('refuses a version that is not a non-negative integer', () => {
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) expect(failure({ ...input, mapId, expectedUpdatedAt: bad }), String(bad)).toBe('Invalid expectedUpdatedAt');
+    // @ts-expect-error — deliberately outside the type
+    expect(failure({ ...input, mapId, expectedUpdatedAt: '5' })).toBe('Invalid expectedUpdatedAt');
   });
 
   it('leaves out the map id and the conversation id that were not given', () => {
@@ -51,6 +63,7 @@ describe('checkSaveMap', () => {
     const bad = 'DROP TABLE schools';
     const message = failure({ ...input, state: { ...state, layers: [layer(1), layer(7, bad)] } });
     expect(message).toBe('The SQL of layer L7 is not allowed');
+    expect(layerIdOfSqlNotAllowed(message)).toBe('L7');
     expect(message).not.toContain(bad);
   });
 

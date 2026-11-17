@@ -945,7 +945,7 @@ test('maps: save, list, get (the same state), update, delete, then get is a 404'
 
     await setTimeout(5);
     const changedState: PersistedMapState = { ...sampleMapState, layers: [sampleLayer(1)], nextLayerSeq: 2 };
-    const updated = await api.saveMap({ mapId: created.mapId, title: 'Second title', state: changedState });
+    const updated = await api.saveMap({ mapId: created.mapId, title: 'Second title', state: changedState, expectedUpdatedAt: created.updatedAt });
     assert.strictEqual(updated.mapId, created.mapId);
     assert.ok(updated.updatedAt > created.updatedAt);
     assert.deepStrictEqual(await api.getMap(created.mapId), { mapId: created.mapId, title: 'Second title', state: changedState, updatedAt: updated.updatedAt });
@@ -958,6 +958,30 @@ test('maps: save, list, get (the same state), update, delete, then get is a 404'
   });
 });
 
+test('maps: an update names the version it saw: a stale one is a 409 and the newer save stays; a version is needed for an update and refused for a new map', async () => {
+  await withMaps('allowed', async (made) => {
+    const v1 = await saved(made, 'v1');
+    await setTimeout(5);
+    const v2 = await api.saveMap({ mapId: v1.mapId, title: 'v2', state: sampleMapState, expectedUpdatedAt: v1.updatedAt });
+    assert.ok(v2.updatedAt > v1.updatedAt);
+    // A second page that still has v1 saves: refused, and v2 is what is stored.
+    await setTimeout(5);
+    const stale = { mapId: v1.mapId, title: 'stale v1', state: { ...sampleMapState, layers: [] }, expectedUpdatedAt: v1.updatedAt };
+    await refusedWith(() => api.saveMap(stale), 'an update with a stale version', mapsStatus.conflict, mapsErrors.Conflict);
+    assert.deepStrictEqual(await api.getMap(v1.mapId), { mapId: v1.mapId, title: 'v2', state: sampleMapState, updatedAt: v2.updatedAt });
+    // With the version of v2 it lands.
+    const v3 = await api.saveMap({ ...stale, expectedUpdatedAt: v2.updatedAt });
+    assert.strictEqual((await api.getMap(v1.mapId)).title, 'stale v1');
+    assert.ok(v3.updatedAt > v2.updatedAt);
+
+    // The type allows it (the check is the server's): an update without the version.
+    await refusedWith(() => api.saveMap({ mapId: v1.mapId, title: 'no version', state: sampleMapState }), 'an update without a version', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    await refusedWith(() => api.saveMap({ title: 'new with a version', state: sampleMapState, expectedUpdatedAt: 1 }), 'a new map with a version', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    await refusedWith(() => api.saveMap({ mapId: v1.mapId, title: 'bad version', state: sampleMapState, expectedUpdatedAt: -1 }), 'a negative version', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    assert.strictEqual((await api.getMap(v1.mapId)).title, 'stale v1', 'refused saves change nothing');
+  });
+});
+
 test('maps: the list is newest first and an update moves a map to the top', async () => {
   await withMaps('allowed', async (made) => {
     const first = await saved(made, 'one');
@@ -966,7 +990,7 @@ test('maps: the list is newest first and an update moves a map to the top', asyn
     const ours = (maps: { mapId: string }[]) => maps.map(({ mapId }) => mapId).filter((mapId) => made.includes(mapId));
     assert.deepStrictEqual(ours((await api.listMaps()).maps), [second.mapId, first.mapId]);
     await setTimeout(5);
-    await api.saveMap({ mapId: first.mapId, title: 'one again', state: sampleMapState });
+    await api.saveMap({ mapId: first.mapId, title: 'one again', state: sampleMapState, expectedUpdatedAt: first.updatedAt });
     assert.deepStrictEqual(ours((await api.listMaps()).maps), [first.mapId, second.mapId]);
   });
 });
@@ -979,7 +1003,7 @@ test("maps: another user cannot get, update or delete a user's map, and does not
       assert.ok((await api.listMaps()).maps.every((map) => map.mapId !== mapId), "another user's list does not have the map");
       const calls: Record<string, () => Promise<ApiResult>> = {
         getMap: () => api.getMap(mapId),
-        'saveMap (update)': () => api.saveMap({ mapId, title: 'Taken over', state: sampleMapState }),
+        'saveMap (update)': () => api.saveMap({ mapId, title: 'Taken over', state: sampleMapState, expectedUpdatedAt: updatedAt }),
         deleteMap: () => api.deleteMap(mapId),
       };
       for (const [name, call] of Object.entries(calls)) {
@@ -1016,10 +1040,10 @@ test('maps: a map id that is not well formed is a 400, one that does not exist a
     for (const id of ['', 'L1', '../x', 'a'.repeat(10_000), `${randomUUID()}x`]) {
       await refusedWith(() => api.getMap(id), `getMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
       await refusedWith(() => api.deleteMap(id), `deleteMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
-      await refusedWith(() => api.saveMap({ mapId: id, title: 't', state: sampleMapState }), `saveMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+      await refusedWith(() => api.saveMap({ mapId: id, title: 't', state: sampleMapState, expectedUpdatedAt: 1 }), `saveMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
     }
     await refusedWith(() => api.getMap(randomUUID()), 'getMap of an unknown id', mapsStatus.notFound, mapsErrors.NotFound);
-    await refusedWith(() => api.saveMap({ mapId: randomUUID(), title: 't', state: sampleMapState }), 'saveMap of an unknown id', mapsStatus.notFound, mapsErrors.NotFound);
+    await refusedWith(() => api.saveMap({ mapId: randomUUID(), title: 't', state: sampleMapState, expectedUpdatedAt: 1 }), 'saveMap of an unknown id', mapsStatus.notFound, mapsErrors.NotFound);
   });
 });
 
@@ -1049,7 +1073,7 @@ test('maps: input over its limits is a 400 and saves nothing', async () => {
     ];
     for (const { what, input } of bad) {
       await refusedWith(() => api.saveMap(input), what, mapsStatus.badRequest, mapsErrors.InvalidRequest);
-      await refusedWith(() => api.saveMap({ ...(input ?? {}), mapId: existing.mapId }), `${what} (an update)`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+      await refusedWith(() => api.saveMap({ ...(input ?? {}), mapId: existing.mapId, expectedUpdatedAt: existing.updatedAt }), `${what} (an update)`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
     }
     const rejectedSql = await refusal(async () => { await api.saveMap({ title: 't', state: { ...sampleMapState, layers: [sampleLayer(1), sampleLayer(2, 'DROP TABLE schools')] } }); }, 'a rejected SQL');
     assert.ok(rejectedSql.message.includes('L2') && !rejectedSql.message.includes('DROP'), 'the message names the layer and does not echo the SQL');
@@ -1063,8 +1087,8 @@ test('maps: a state of the largest allowed size is saved', async () => {
     const layers = Array.from({ length: 6 }, (_, n) => sampleLayer(n, sqlOfLength(queryConfig.maxSqlChars)));
     const state: PersistedMapState = { ...sampleMapState, layers };
     assert.ok(new TextEncoder().encode(JSON.stringify(state)).length <= mapsConfig.maxStateBytes);
-    const { mapId } = await saved(made, 'Big');
-    await api.saveMap({ mapId, title: 'Big', state });
+    const { mapId, updatedAt } = await saved(made, 'Big');
+    await api.saveMap({ mapId, title: 'Big', state, expectedUpdatedAt: updatedAt });
     assert.deepStrictEqual((await api.getMap(mapId)).state, state);
   });
 });
@@ -1073,13 +1097,13 @@ test("maps: a conversation id is stored when it is the caller's, and refused (40
   const foreign = await asRole('admin', async () => (await api.agentCreateConversationId()).conversationId);
   await withMaps('allowed', async (made) => {
     const own = (await api.agentCreateConversationId()).conversationId;
-    const { mapId } = await saved(made, 'With a conversation', { conversationId: own });
+    const { mapId, updatedAt } = await saved(made, 'With a conversation', { conversationId: own });
     assert.strictEqual((await api.getMap(mapId)).conversationId, own);
 
     const listBefore = (await api.listMaps()).maps.length;
     for (const [what, conversationId] of [['another user\'s', foreign], ['an unknown', randomUUID()]] as const) {
       await refusedWith(() => api.saveMap({ title: 't', state: sampleMapState, conversationId }), `a new map with ${what} conversation`, conversationStatus.notFound, conversationErrors.NotFound);
-      await refusedWith(() => api.saveMap({ mapId, title: 't', state: sampleMapState, conversationId }), `an update with ${what} conversation`, conversationStatus.notFound, conversationErrors.NotFound);
+      await refusedWith(() => api.saveMap({ mapId, title: 't', state: sampleMapState, conversationId, expectedUpdatedAt: updatedAt }), `an update with ${what} conversation`, conversationStatus.notFound, conversationErrors.NotFound);
     }
     await refusedWith(() => api.saveMap({ title: 't', state: sampleMapState, conversationId: 'not-a-uuid' }), 'a malformed conversation id', mapsStatus.badRequest, mapsErrors.InvalidRequest);
     assert.strictEqual((await api.listMaps()).maps.length, listBefore, 'a refused save adds no map');
@@ -1094,7 +1118,7 @@ test('maps: a new map beyond the per-user limit is a 409, an update still works,
     assert.strictEqual((await api.listMaps()).maps.length, mapsConfig.maxMapsPerUser);
     await refusedWith(() => api.saveMap({ title: 'One too many', state: sampleMapState }), 'a map beyond the limit', mapsStatus.conflict, mapsErrors.LimitReached);
     const [first] = made;
-    await api.saveMap({ mapId: first, title: 'Still updatable', state: sampleMapState });
+    await api.saveMap({ mapId: first, title: 'Still updatable', state: sampleMapState, expectedUpdatedAt: (await api.getMap(first)).updatedAt });
     assert.strictEqual((await api.getMap(first)).title, 'Still updatable');
     await withMaps('admin', async (adminMade) => { await saved(adminMade, 'Another user is not limited'); });
     await signInAs('allowed');

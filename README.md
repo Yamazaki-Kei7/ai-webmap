@@ -92,12 +92,12 @@ SQL ボックスの下にスタイルボックスもあります。レイヤー�
 
 | メソッド | 内容 |
 |------|------|
-| `saveMap({ mapId?, title, state, conversationId? })` | `mapId` がなければ新規、あれば自分の地図の上書き。`{ mapId, updatedAt }` を返す |
+| `saveMap({ mapId?, title, state, conversationId?, expectedUpdatedAt? })` | `mapId` がなければ新規、あれば自分の地図の上書き。上書きは `expectedUpdatedAt`（自分が保存した、または開いた版の `updatedAt`）が必須で、新規には付けられません（どちらも 400）。`{ mapId, updatedAt }` を返す |
 | `listMaps()` | 自分の地図を、新しく保存した順に（`state` なしで）返す |
 | `getMap(mapId)` | 自分の地図 1 件（`state` を含む） |
 | `deleteMap(mapId)` | 自分の地図を削除 |
 
-`state` は `shared/persistedMap.ts` の `persistedMapStateSchema`（`version: 1`、表示範囲、レイヤー（id、名前、SQL、スタイル、ラベル、表示/非表示）、`nextLayerSeq`）です。地物は保存せず、復元はレイヤーの SQL を実行し直します。上限は `shared/config.ts` の `mapsConfig`（タイトル 1〜80 文字、レイヤー 20 枚、`state` の JSON 64 KiB、1 人 100 件）です。順序は、サインイン、利用許可の一覧、引数の検査（400 `InvalidMapRequestException`）、`conversationId` があればその所有者の確認（他人の会話と存在しない会話は、会話 API の 404 `ConversationNotFoundException`。形式が不正なら 400 `InvalidMapRequestException`）、保存先の操作です。各レイヤーの SQL は SQL ガードにも通し（却下は、レイヤーの id を挙げた 400）、復元のときにブラウザがもう一度ガードします。保存先は `DistributedTable`（`aws-blocks/maps-table.ts`。パーティションキーは `userId`、ソートキーは `mapId`）で、`userId` は常にサインインした利用者の名前であり、クライアントの引数からは取りません。他人の地図と存在しない地図は、どちらも 404 `MapNotFoundException` です。上書きは、読んだときの `updatedAt` が変わっていないときだけ書き（`ifFieldEquals`）、削除は 1 回の条件付き削除（`ifExists`、なければ 404）なので、削除した地図が上書きで戻ることも、新しい保存を黙って上書きすることもなく、競合は 409 `MapConflictException`（「開き直してから保存し直す」）です。保存し直し（`mapId` つき）は地図全体を置き換えるので、会話を残すなら `conversationId` をもう一度渡します。100 件を超える新規保存は 409 `MapLimitReachedException`（同時の新規保存は、その数だけ超えることがあります）、保存された内容がスキーマに合わない地図の `getMap` は 500 `MapCorruptException` です。エラー名は `shared/maps.ts` にあります。テーブルは、ローカルでは開発サーバーのモックが作り、デプロイ先では最初のデプロイで作られます（まだデプロイしていないので、AWS では未確認です）。AWS では、読み取りが結果整合（ブロックに強い整合性の読み取りがありません）なので、作ったばかりの地図を読むと一度 404 になることがあります。一覧は 1 人分の全件（状態を含む、最大 100 件）を読みます。
+`state` は `shared/persistedMap.ts` の `persistedMapStateSchema`（`version: 1`、表示範囲、レイヤー（id、名前、SQL、スタイル、ラベル、表示/非表示）、`nextLayerSeq`）です。地物は保存せず、復元はレイヤーの SQL を実行し直します。上限は `shared/config.ts` の `mapsConfig`（タイトル 1〜80 文字、レイヤー 20 枚、`state` の JSON 64 KiB、1 人 100 件）です。順序は、サインイン、利用許可の一覧、引数の検査（400 `InvalidMapRequestException`）、`conversationId` があればその所有者の確認（他人の会話と存在しない会話は、会話 API の 404 `ConversationNotFoundException`。形式が不正なら 400 `InvalidMapRequestException`）、保存先の操作です。各レイヤーの SQL は SQL ガードにも通し（却下は、レイヤーの id を挙げた 400）、復元のときにブラウザがもう一度ガードします。保存先は `DistributedTable`（`aws-blocks/maps-table.ts`。パーティションキーは `userId`、ソートキーは `mapId`）で、`userId` は常にサインインした利用者の名前であり、クライアントの引数からは取りません。他人の地図と存在しない地図は、どちらも 404 `MapNotFoundException` です。上書きは、呼び出し側が渡した `expectedUpdatedAt` と保存済みの `updatedAt` が同じときだけ書き（`ifFieldEquals`。サーバーが読んだ版とは比べません。読みは古いことがあり、呼び出し側が何を見たかも表さないためです）、削除は 1 回の条件付き削除（`ifExists`、なければ 404）なので、削除した地図が上書きで戻ることも、別の画面の新しい保存を黙って上書きすることもなく、どちらも 409 `MapConflictException` です（地図を開き直すか、「新しい地図として保存」します）。レイヤーの SQL が却下されたときのメッセージの形は `shared/maps.ts` の `sqlNotAllowedMessage` で、ブラウザが同じモジュールでレイヤーの id を読み戻します（API のエラーが運ぶのは名前とステータスだけです）。保存し直し（`mapId` つき）は地図全体を置き換えるので、会話を残すなら `conversationId` をもう一度渡します。100 件を超える新規保存は 409 `MapLimitReachedException`（同時の新規保存は、その数だけ超えることがあります）、保存された内容がスキーマに合わない地図の `getMap` は 500 `MapCorruptException` です。エラー名は `shared/maps.ts` にあります。テーブルは、ローカルでは開発サーバーのモックが作り、デプロイ先では最初のデプロイで作られます（まだデプロイしていないので、AWS では未確認です）。AWS では、読み取りが結果整合（ブロックに強い整合性の読み取りがありません）なので、作ったばかりの地図を読むと一度 404 になることがあります。一覧は 1 人分の全件（状態を含む、最大 100 件）を読みます。
 
 ### 管理者の一覧
 
@@ -291,9 +291,17 @@ E2E テストは、アップロードの往復を確かめるために、先頭�
 
 右のドックにチャットパネル（`src/lib/components/ChatPanel.svelte`。メッセージは `ChatMessage.svelte`、ツールの実行状況は `ToolActivity.svelte`）があります。入力は Enter で送信、Shift+Enter で改行で、IME の変換確定の Enter では送りません。データエンジンの準備中は入力を止め、起動に失敗したときはパネルに再試行つきのバナーを出し、許可リストにないアカウントでは「このアカウントはデータを利用できません」と出してチャットを使えなくします。文言と値は `shared/config.ts` の `chatConfig` にあります。会話は `src/lib/chat/chatSession.svelte.ts` が動かします。Agent ブロックの `createChat` を Realtime のトランスポートで `agent*` の API につなぎ、モデルのツール呼び出し（interrupt）をブラウザの実行器で動かして、結果をまとめて 1 回で返します。ターンが終わる（`done` かエラー）まで送信できません。「新しい会話」を押すと、実行中のターンは捨てられ、その後のツール呼び出しには `SESSION_RESET` を返します。ストアの結果整合のための 409 / 404 は、`shared/config.ts` の `chatConfig.retryDelaysMs` の間隔で再試行します。ページを再読み込みすると会話は引き継がれません（古い会話の保留中の interrupt はサーバーに残ります）。
 
-### 地図の保存と復元（ブラウザ側、UI は Task 6.3）
+### 地図の保存と復元（ブラウザ側）
 
 `src/lib/map/persist.svelte.ts` の `toPersisted()` が、いまの地図を `persistedMapStateSchema` に合う状態（地物なし）にして `{ ok: true, state }` で返します（レイヤーが上限を超えると `{ ok: false, reason: 'tooManyLayers' }`、スキーマに合わないと `'invalid'`。例外は投げません。ズームは保存できる範囲に丸めます）。`restoreMap(state, { queryLayer, jumpTo })` は、状態をスキーマで検査し（不正なら何もせず `report.invalid`）、地図を空にして（保存された id は先に確保します）から、保存順に 1 枚ずつ、SQL ガードを通る `queryLayer` で SQL を実行し直し、保存された id・名前・スタイル・ラベル・表示/非表示でレイヤーを戻します（表示範囲は最後に戻し、レイヤーごとの自動フィットはしません）。クエリやスタイルが失敗したレイヤーは、`status: 'error'` のエラーレイヤーとして一覧に残り（カードにメッセージを出し、地図には描かず、`<map_state>` には id・名前・`error` だけを載せます）、ほかのレイヤーは復元されます。進み具合は `restoreProgress.current`（`{ done, total }`）、結果は `RestoreReport`（`restored`、`failed`）です。復元中にもう一度復元すると、前のものは打ち切られます。`ChatSession.openConversation(conversationId)` は、保存された会話の履歴を表示して続きの会話にし、保留中の interrupt には `SESSION_RESET` を返します（見つからなければ日本語のエラーを出し、新しい会話のままです）。ラベルがジオメトリの上に出る順序は、非表示のアンカーレイヤー（`mapConfig.labelAnchorLayerId`）で決めます。ジオメトリはその下、ラベルはその上に入れるので、追加の順序やタイミングに左右されません。開発サーバーでは、ブラウザ確認用に `window.__aiWebmapPersist`（保存・復元・API）と `window.__aiWebmapChat`（`openConversation`）が使えます。
+
+### 地図の保存・開く・新規作成（上部バー）
+
+上部バーのタイトルの隣に「保存」「開く」「新規作成」のボタンと、いまの地図のタイトル（保存前は「無題の地図」）があります（`src/lib/components/MapBar.svelte`。ダイアログは `SaveMapDialog.svelte`、`OpenMapDialog.svelte`、`ConfirmDialog.svelte` で、いずれもネイティブの `<dialog>` を使う `ModalDialog.svelte` の上にあり、フォーカスはダイアログ内に閉じ、Esc で閉じ、閉じるとフォーカスは元の場所へ戻ります）。保存すると、最初の 1 回は新しい地図を作り、あとは同じ地図を、そのときのチャットの会話 ID とともに更新します（会話がまだなければ会話なしで保存します）。レイヤーが `mapsConfig.maxLayers` を超える地図は、理由を出して保存ボタンを止めます。開くときは、保存されていない変更があれば先に確認し、会話を先に開いてからレイヤーを復元します。復元中はチャットの入力を止めて「地図を復元しています（done/total）」を出し、レイヤーパネルにも進み具合を出します。復元できなかったレイヤーはカードにエラーを出し、「N 枚のレイヤーを復元できませんでした」の行が残ります。新規作成は、保存されていない変更があれば確認してから、地図を空にして新しい会話を始めます。
+
+保存されていない変更は、最後に保存した（または開いた）状態の `toPersisted()` と比べて決めます（`src/lib/map/savedMaps.ts` の `hasUnsavedChanges`）。レイヤーの追加・削除・並べ替え・名前・SQL・スタイル・ラベル・表示/非表示はどれも変更です。表示範囲は、少し動かしただけでは変更にならず、ズームが `mapsConfig.unsavedViewChange.zoomLevels`（0.5）以上変わるか、中心が保存時のズームで `centerTiles`（0.25 タイル分、タイルは 360 / 2^ズーム 度。約 128 px）以上動いたときだけ変更です。変更があるあいだは、ページを離れる前にブラウザが確認します（`beforeunload`）。メッセージは `shared/config.ts` の `mapsConfig.text` にあり、エラーはサーバーのエラー名（`shared/maps.ts`）から日本語にします。
+
+保存は更新のたびに、保存した（または開いた）版の `updatedAt` を `expectedUpdatedAt` として送ります。別の画面で先に保存されていれば 409 `MapConflictException` になり、ダイアログに競合のメッセージと「新しい地図として保存」を出します（上書きはしません）。保存中は、ボタンも Esc も止めます（二重に作らないため）。
 
 ### データエンジン（DuckDB-WASM）
 

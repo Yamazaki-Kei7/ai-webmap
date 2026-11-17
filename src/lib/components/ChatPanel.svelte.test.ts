@@ -4,36 +4,33 @@ import { chatConfig } from '../../../shared/config';
 import type { EngineStatus } from '$lib/duckdb/engineCore';
 import type { ChatSession, ToolActivity } from '$lib/chat/chatSession.svelte';
 
-// The panel is mounted for real (jsdom); the session behind it is a stand-in whose state the tests set, and what the panel
+// The panel is mounted for real (jsdom); the session it is given is a stand-in whose state the tests set, and what the panel
 // does with it (disabled input, Enter, the lines, the announcement, the focus) is read from the DOM.
 type Fake = { messages: ChatSession['messages']; isLoading: boolean; activity: ToolActivity[]; error: string | null };
 const fake: Fake = $state({ messages: [], isLoading: false, activity: [], error: null });
 const send = vi.fn<ChatSession['send']>(async () => undefined);
 const reset = vi.fn();
 
-vi.mock('$lib/chat/chatSession.svelte', () => ({
-  createChatSession: (): ChatSession => ({
-    get messages() {
-      return fake.messages;
-    },
-    get isLoading() {
-      return fake.isLoading;
-    },
-    get activity() {
-      return fake.activity;
-    },
-    get error() {
-      return fake.error;
-    },
-    send,
-    openConversation: async () => undefined,
-    reset,
-    dispose: () => undefined
-  })
-}));
-vi.mock('$lib/chat/chatApi', () => ({ chatApi: {} }));
-vi.mock('$lib/chat/clientTools', () => ({ createClientToolExecutor: () => async () => ({ ok: true, data: {} }) }));
-vi.mock('$lib/map/mapState.svelte', () => ({ summarizeForLlm: () => ({ view: { center: [0, 0], zoom: 1 }, layers: [] }) }));
+// The session is handed to the panel (the shell owns it).
+const session: ChatSession = {
+  get messages() {
+    return fake.messages;
+  },
+  get isLoading() {
+    return fake.isLoading;
+  },
+  get activity() {
+    return fake.activity;
+  },
+  get error() {
+    return fake.error;
+  },
+  conversationId: null,
+  send,
+  openConversation: async () => 'opened',
+  reset,
+  dispose: () => undefined
+};
 vi.mock('./narrowViewport', () => ({ narrowViewport: { current: false } }));
 
 const { default: ChatPanel } = await import('./ChatPanel.svelte');
@@ -41,10 +38,10 @@ const { default: ChatPanel } = await import('./ChatPanel.svelte');
 const ready: EngineStatus = { state: 'ready', duckdbVersion: 'x' };
 const mounted: ReturnType<typeof mount>[] = [];
 
-function render(engineStatus: EngineStatus = ready): HTMLElement {
+function render(engineStatus: EngineStatus = ready, restoring: { done: number; total: number } | null = null): HTMLElement {
   const target = document.createElement('div');
   document.body.append(target);
-  mounted.push(mount(ChatPanel, { target, props: { engineStatus, owner: 'a', onRetry: () => undefined } }));
+  mounted.push(mount(ChatPanel, { target, props: { engineStatus, session, owner: 'a', restoring, onRetry: () => undefined } }));
   flushSync();
   return target;
 }
@@ -96,6 +93,14 @@ describe('ChatPanel input', () => {
     const root = render();
     expect(byId<HTMLTextAreaElement>(root, 'chat-input').disabled).toBe(true);
     expect(byId(root, 'chat-block-reason').textContent).toBe(chatConfig.text.working);
+  });
+
+  it('is disabled, with the progress, while a saved map is rebuilt (even when no turn runs)', () => {
+    const root = render(ready, { done: 1, total: 3 });
+    expect(byId<HTMLTextAreaElement>(root, 'chat-input').disabled).toBe(true);
+    expect(byId<HTMLButtonElement>(root, 'chat-send').disabled).toBe(true);
+    expect(byId(root, 'chat-block-reason').textContent).toBe('地図を復元しています（1/3）');
+    expect(byId<HTMLButtonElement>(root, 'chat-example').disabled).toBe(true);
   });
 
   it('is disabled while the engine starts, and for a refused account (with its message, and no send)', () => {

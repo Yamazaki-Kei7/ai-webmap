@@ -1,6 +1,7 @@
 /** Application settings shared by the frontend and the backend (design 9.2). */
 
 import { conversationErrors } from './conversation';
+import { mapsErrors } from './maps';
 
 export const modelConfig = {
   modelId: 'jp.anthropic.claude-haiku-5-5'
@@ -54,6 +55,87 @@ export const toolConfig = {
   viewDecimals: 4
 } as const;
 
+/** The texts of the save / open / new UI (`src/lib/components/MapBar.svelte` and its dialogs); `{n}` and `{id}` are filled in by the caller. */
+const mapsTexts = {
+  untitled: '無題の地図',
+  /** The title shown while a map is being opened (the one on the screen is no longer the one that counts). */
+  loadingTitle: '読み込み中',
+  save: '保存',
+  open: '開く',
+  newMap: '新規作成',
+  cancel: 'キャンセル',
+  unsavedMark: '●',
+  unsavedLabel: '（保存されていない変更があります）',
+  saved: '保存しました',
+  restoreFailedLayers: '{n} 枚のレイヤーを復元できませんでした',
+  restoreProgress: '地図を復元しています（{done}/{total}）',
+  /** Why 開く is disabled: the layers are rebuilt by the data engine. */
+  openNeedsEngine: 'データエンジンの準備ができるまで開けません',
+  saveDialog: {
+    title: '地図を保存',
+    titleLabel: '地図の名前',
+    titleHint: '{max} 文字まで',
+    saveAsNew: '新しい地図として保存',
+    saving: '保存しています…',
+    /** The refusals before the call: the state cannot be saved at all. */
+    tooManyLayers: 'レイヤーが多すぎるため保存できません（上限 {n} 枚）',
+    invalid: 'この地図の状態は保存できません',
+    /** The title field is empty (or only spaces). */
+    titleRequired: '名前を入力してください'
+  },
+  openDialog: {
+    title: '地図を開く',
+    loading: '読み込み中…',
+    empty: '保存された地図はありません。',
+    open: '開く',
+    remove: '削除',
+    close: '閉じる',
+    /** Names the map in the accessible name of its buttons. */
+    openLabel: '「{title}」を開く',
+    removeLabel: '「{title}」を削除',
+    confirmRemove: '「{title}」を削除しますか。元に戻せません。',
+    confirmRemoveAction: '削除する',
+    removing: '削除しています…',
+    removed: '削除しました',
+    /** Opening a map throws away what is not saved: asked first. */
+    confirmDiscard: '保存されていない変更があります。破棄して開きますか',
+    discardAndOpen: '破棄して開く',
+    opening: '開いています…',
+    updatedAt: '更新'
+  },
+  newDialog: {
+    confirmDiscard: '保存されていない変更があります。破棄して新しい地図を作りますか',
+    discardAndNew: '破棄して新規作成'
+  },
+  /** An error name (`shared/maps.ts`) → the message of each action. Any other failure (a lost connection included) shows `generic`; never its own text. */
+  errors: {
+    save: {
+      [mapsErrors.Conflict]: '別の画面でこの地図が変更されました。開き直してから保存してください',
+      [mapsErrors.LimitReached]: '保存できる地図の数（上限 {n} 件）に達しました。不要な地図を削除してください',
+      [mapsErrors.InvalidRequest]: '保存できない内容が含まれています',
+      [mapsErrors.NotFound]: 'この地図は削除されています。新しい地図として保存しますか',
+      [conversationErrors.NotFound]: '会話が見つかりません。少し待ってからもう一度保存してください',
+      generic: '保存できませんでした。接続を確かめて、もう一度お試しください'
+    } as Readonly<Record<string, string>>,
+    /** The layer a 400 names, added to the message. */
+    invalidLayer: '（レイヤー {id}）',
+    list: {
+      generic: '地図の一覧を読み込めませんでした。接続を確かめて、もう一度お試しください'
+    } as Readonly<Record<string, string>>,
+    open: {
+      [mapsErrors.NotFound]: 'この地図は見つかりません。削除された可能性があります',
+      [mapsErrors.Corrupt]: 'この地図は壊れていて開けません',
+      generic: '地図を開けませんでした。接続を確かめて、もう一度お試しください',
+      /** The map's own state could not be used (the browser refused it). */
+      invalidState: 'この地図は開けない内容です'
+    } as Readonly<Record<string, string>>,
+    remove: {
+      [mapsErrors.NotFound]: 'この地図はすでに削除されています',
+      generic: '削除できませんでした。接続を確かめて、もう一度お試しください'
+    } as Readonly<Record<string, string>>
+  }
+} as const;
+
 /** Saved maps (`shared/persistedMap.ts`, `aws-blocks/maps*.ts`): the limits of one map and of one user's collection. */
 export const mapsConfig = {
   /** Title length, in characters (Unicode code points). */
@@ -63,7 +145,17 @@ export const mapsConfig = {
   /** The whole persisted state as JSON (UTF-8 bytes): well below the 400 KB of a table item, and a layer's SQL (`queryConfig.maxSqlChars`) alone may not fill it. */
   maxStateBytes: 64 * 1024,
   /** Most maps one user keeps; saving a new one beyond it is refused (409). Listing reads all of them, so the cap also bounds that read. */
-  maxMapsPerUser: 100
+  maxMapsPerUser: 100,
+  /**
+   * Which view changes count as unsaved changes: panning and zooming a little does not. The view is changed when the zoom
+   * differs by `zoomLevels` or more, or the centre has moved by `centerTiles` or more map tiles (of 360 / 2^zoom degrees) at the saved zoom.
+   */
+  unsavedViewChange: { zoomLevels: 0.5, centerTiles: 0.25 },
+  /** How long the line 「保存しました」 stays (milliseconds). */
+  noticeMs: 4_000,
+  /** The language of the list's dates. */
+  dateLocale: 'ja-JP',
+  text: mapsTexts
 } as const;
 
 /** The system prompt (`shared/prompt.ts`). */

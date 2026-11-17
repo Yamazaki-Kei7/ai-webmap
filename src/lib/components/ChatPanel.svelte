@@ -1,47 +1,32 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { Map as MaplibreMap } from 'maplibre-gl';
   import { agentConfig, chatConfig, layoutConfig } from '../../../shared/config';
-  import { chatApi } from '$lib/chat/chatApi';
-  import { bindChatToUser } from '$lib/chat/chatBinding.svelte';
   import { canSend, chatEngineState, draftLength, inputBlock, inputBlockText, isNearBottom, isSendKey, mayRestoreFocus } from '$lib/chat/chatPanelState';
-  import { createChatSession } from '$lib/chat/chatSession.svelte';
-  import { createClientToolExecutor } from '$lib/chat/clientTools';
-  import { createConversationStore } from '$lib/chat/conversationStore';
+  import type { ChatSession } from '$lib/chat/chatSession.svelte';
   import type { EngineStatus } from '$lib/duckdb/engineCore';
   import { isRetryableMessage } from '$lib/duckdb/errors';
-  import { summarizeForLlm } from '$lib/map/mapState.svelte';
   import ChatMessage from './ChatMessage.svelte';
   import { narrowViewport } from './narrowViewport';
   import ToolActivity from './ToolActivity.svelte';
 
-  let { engineStatus, map, owner, onRetry }: { engineStatus: EngineStatus; map?: MaplibreMap; owner: string | null; onRetry: () => void } = $props();
+  /** `session`: the chat of the signed-in user (the shell owns it: saving and opening a map reach it), undefined before there is one. `restoring`: how far the map being rebuilt is, or null. */
+  let {
+    engineStatus,
+    session,
+    owner,
+    restoring = null,
+    onRetry
+  }: { engineStatus: EngineStatus; session: ChatSession | undefined; owner: string | null; restoring?: { done: number; total: number } | null; onRetry: () => void } = $props();
 
   const text = chatConfig.text;
-  const store = createConversationStore(() => sessionStorage);
-  // One session per signed-in user: another user, or signing out, drops it.
-  const binding = bindChatToUser({
-    getOwner: () => owner,
-    createSession: (name) => createChatSession({ api: chatApi, owner: name, store, executor: createClientToolExecutor(() => map), mapContext: summarizeForLlm })
-  });
-  const session = $derived(binding.session);
-  if (import.meta.env.DEV) {
-    // Browser checks reach the session (`openConversation`) through this.
-    $effect(() => {
-      window.__aiWebmapChat = session;
-      return () => {
-        window.__aiWebmapChat = undefined;
-      };
-    });
-  }
   const messages = $derived(session?.messages ?? []);
   const activity = $derived(session?.activity ?? []);
   const busy = $derived(session?.isLoading ?? false);
   const error = $derived(session?.error ?? null);
 
   const engine = $derived(chatEngineState(engineStatus));
-  const block = $derived(inputBlock(engine, busy));
-  const blockText = $derived(block === null ? null : inputBlockText(block));
+  const block = $derived(inputBlock(engine, busy, restoring !== null));
+  const blockText = $derived(block === null ? null : inputBlockText(block, restoring));
   const retryable = $derived(engineStatus.state === 'error' && isRetryableMessage(engineStatus.message));
 
   let draft = $state('');
