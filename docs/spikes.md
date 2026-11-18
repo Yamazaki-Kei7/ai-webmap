@@ -16,7 +16,7 @@
 | Vite | 6.4.6 |
 | テンプレートの E2E（`npm run test:e2e`） | 13/13 通過（改変前のテンプレート） |
 | スパイク B-1 の計測環境 | Apple M2 / 24 GB、macOS 26.6.2、Chrome 157.0.8103.79（Playwright MCP）。`npm run dev`（Vite の開発サーバー）で計測。静的ビルドは動作確認のみ |
-| スパイク B-2 / A の再計測の環境 | AWS サンドボックス（ap-northeast-1、プロファイル `training`）のホスト型プレビュー。手元の Mac から Chrome for Testing 149.0.7827.55（headless shell、Playwright + CDP） |
+| スパイク B-2 / A の再計測の環境 | AWS サンドボックス（ap-northeast-1、プロファイル `<プロファイル>`）のホスト型プレビュー。手元の Mac から Chrome for Testing 149.0.7827.55（headless shell、Playwright + CDP） |
 | ブラウザ内の DuckDB | `@duckdb/duckdb-wasm` 1.32.0 が載せるエンジンは v1.4.3、`eh` バンドル |
 | `svelte-maplibre-gl` / `maplibre-gl` | 2.2.1 / 6.18.0 |
 
@@ -27,9 +27,9 @@
 
 ### AWS の認証状態（2026-11-17 時点）
 
-- ユーザーが SSO でプロファイル `training`（アカウント <アカウント ID>、プロファイルのリージョンは ap-northeast-1）にサインインした。`aws sts get-caller-identity --profile training` が成功することを確認した（ロールは `AWSReservedSSO_AWSAdministratorAccess_*`）。
-- シェルに `AWS_PROFILE` は設定されていないので、開発サーバーは `AWS_PROFILE=training npm run dev` で起動した。
-- Bedrock の呼び出し可否（`AWS_PROFILE=training`、dev サーバー経由。拒否の確認はそれぞれ 1 回、短い発話で）: Claude Sonnet 4.6（`global.` プロファイル）と Claude Haiku 4.5（`global.` プロファイル）は、組織の SCP の明示的な拒否（`AccessDeniedException`、403）で呼べなかった。`jp.anthropic.claude-haiku-5-5` は呼べた。Blocks を通さない SDK の 1 回の呼び出しでは、`jp.anthropic.claude-sonnet-4-6` も呼べた。詳細は「スパイク C」。
+- ユーザーが SSO でプロファイル `<プロファイル>`（アカウント <アカウント ID>、プロファイルのリージョンは ap-northeast-1）にサインインした。`aws sts get-caller-identity --profile <プロファイル>` が成功することを確認した（ロールは `<SSO ロール名>`）。
+- シェルに `AWS_PROFILE` は設定されていないので、開発サーバーは `AWS_PROFILE=<プロファイル> npm run dev` で起動した。
+- Bedrock の呼び出し可否（`AWS_PROFILE=<プロファイル>`、dev サーバー経由。拒否の確認はそれぞれ 1 回、短い発話で）: Claude Sonnet 4.6（`global.` プロファイル）と Claude Haiku 4.5（`global.` プロファイル）は、組織の SCP の明示的な拒否（`AccessDeniedException`、403）で呼べなかった。`jp.anthropic.claude-haiku-5-5` は呼べた。Blocks を通さない SDK の 1 回の呼び出しでは、`jp.anthropic.claude-sonnet-4-6` も呼べた。詳細は「スパイク C」。
 
 ## スパイク A: interrupt の往復
 
@@ -52,7 +52,7 @@
 
 ### 結果
 
-実施日 2026-11-17。コードは `aws-blocks/index.ts` の `Spike A` ブロックと `src/routes/spike/agent/interrupt/+page.svelte`（どちらも Task 0.7 で削除）。実モデルの結果はすべて `jp.anthropic.claude-haiku-5-5`（`SPIKE_MODEL`）で、ローカルの開発サーバー（`AWS_PROFILE=training npm run dev`）、Chrome（Playwright）から測った。時間はブラウザ内の `performance.now()`。実モデルの呼び出しは合計で約 79 回（各ターンのモデル呼び出しを数えた概算。内訳: スモーク 2、往復計測 40、順番ツール 3、誤って実モデルで動かした canned 用シナリオ 約 3、並列 約 5、同じ入力 5、再読み込み 約 5、上限 約 6、内容照合（修正ラウンド）10）。
+実施日 2026-11-17。コードは `aws-blocks/index.ts` の `Spike A` ブロックと `src/routes/spike/agent/interrupt/+page.svelte`（どちらも Task 0.7 で削除）。実モデルの結果はすべて `jp.anthropic.claude-haiku-5-5`（`SPIKE_MODEL`）で、ローカルの開発サーバー（`AWS_PROFILE=<プロファイル> npm run dev`）、Chrome（Playwright）から測った。時間はブラウザ内の `performance.now()`。実モデルの呼び出しは合計で約 79 回（各ターンのモデル呼び出しを数えた概算。内訳: スモーク 2、往復計測 40、順番ツール 3、誤って実モデルで動かした canned 用シナリオ 約 3、並列 約 5、同じ入力 5、再読み込み 約 5、上限 約 6、内容照合（修正ラウンド）10）。
 
 各項目の根拠は【実行】（動かして観察した）、【ソース】（`node_modules/@aws-blocks/bb-agent` / `@strands-agents/sdk` を読んだ）、【推定】のどれかを付けて区別する。
 
@@ -370,7 +370,7 @@
 
 実施日 2026-11-17。コードは `aws-blocks/index.ts` の `SPIKE` ブロック、`shared/spike-files.ts`、`src/routes/spike/duckdb/range/`、`src/routes/spike/duckdb/net-probe.ts`、`scripts/spike/variants.sh`（すべて Task 0.7 で削除）。
 
-- **環境**: AWS サンドボックス（`AWS_PROFILE=training`、ap-northeast-1）に `npm run sandbox:preview` でデプロイしたバックエンドとホスト型プレビュー。プレビューの前面は API Gateway HTTP API で、フロントは SvelteKit の静的ビルド（`framework: 'spa'`）。計測はプレビューの URL を、手元の Mac から Chrome for Testing 149.0.7827.55（headless shell。Playwright から操作）で開いて行った。ネットワークの記録は CDP（`Network.requestWillBeSent` などを、ページと Worker の両方に自動アタッチして取得。プリフライトの OPTIONS も見える）と、ページ側の Worker 内 XHR の記録（`net-probe.ts`）の 2 系統。
+- **環境**: AWS サンドボックス（`AWS_PROFILE=<プロファイル>`、ap-northeast-1）に `npm run sandbox:preview` でデプロイしたバックエンドとホスト型プレビュー。プレビューの前面は API Gateway HTTP API で、フロントは SvelteKit の静的ビルド（`framework: 'spa'`）。計測はプレビューの URL を、手元の Mac から Chrome for Testing 149.0.7827.55（headless shell。Playwright から操作）で開いて行った。ネットワークの記録は CDP（`Network.requestWillBeSent` などを、ページと Worker の両方に自動アタッチして取得。プリフライトの OPTIONS も見える）と、ページ側の Worker 内 XHR の記録（`net-probe.ts`）の 2 系統。
 - **デプロイ**: 最初のデプロイは 118.72 秒（合計 123.25 秒）。`AssetExceedsProxyLimit` の警告が 2 件。その後、ページのコード（`src/routes/spike/**`）だけを変えて `npm run sandbox:preview` を 3 回再実行した（各 約 64〜65 秒）。再実行でプレビューの URL は変わらなかった。バックエンド（`aws-blocks/index.ts`、`index.cdk.ts`、`shared/`）は、最初のデプロイと同一の内容のまま。
 - **バケット**: `FileBucket('spike-data')`、CORS は GET / HEAD、許可オリジン `*`（プレビューの URL はデプロイ前に分からず、synth 時に参照するとバケットと API が循環する見込みのため）、許可ヘッダー `Range`、公開ヘッダー `Content-Range` / `Content-Length` / `Accept-Ranges` / `ETag`、`maxAge` 3000。署名付き URL の有効期間は 3600 秒。ファイルは AWS CLI で置いた（検証データ 13 本と `duckdb-eh.wasm`）。
 - **ユーザー**: 乱数のユーザー名でプレビュー上でサインアップしてから、そのユーザー名だけを許可リスト（SSM パラメーター）に入れた。サインアップ前の許可リストは空（`[]`）。
@@ -647,11 +647,11 @@ User: arn:aws:sts::<アカウント ID>:assumed-role/<SSO ロール名>/<SSO ユ
 - このアカウントでは、`global.` 経由で試した 2 モデル（Sonnet 4.6、Haiku 4.5）が、同じ SCP `<SCP ID>` の明示的な拒否で呼べなかった。
 - 拒否では、リソースのリージョン部が空（`arn:aws:bedrock:::foundation-model/...`）だった。
 - IAM 側（ロールは AdministratorAccess）では SCP の明示的な拒否を解消できない。AWS の評価規則による説明で、試してはいない。
-- 成功した `jp.anthropic.claude-haiku-5-5` は、プロファイルの対象が ap-northeast-1 と ap-northeast-3 のモデル（2026-11-17 に `aws bedrock get-inference-profile --inference-profile-identifier jp.anthropic.claude-haiku-5-5 --profile training --region ap-northeast-1` で確認。`models` に両リージョンの `anthropic.claude-haiku-5-5`、`status` は `ACTIVE`、`type` は `SYSTEM_DEFINED`）。
+- 成功した `jp.anthropic.claude-haiku-5-5` は、プロファイルの対象が ap-northeast-1 と ap-northeast-3 のモデル（2026-11-17 に `aws bedrock get-inference-profile --inference-profile-identifier jp.anthropic.claude-haiku-5-5 --profile <プロファイル> --region ap-northeast-1` で確認。`models` に両リージョンの `anthropic.claude-haiku-5-5`、`status` は `ACTIVE`、`type` は `SYSTEM_DEFINED`）。
 - Haiku の結果だけでは、拒否の条件がプロファイル（`global.` か `jp.` か）なのかモデルなのかを区別できなかった（失敗した 2 件と成功した Haiku 5.5 は、プロファイルもモデルも違う）。下の Sonnet 4.6 の単発確認は、Sonnet 4.6 についてだけこれを切り分ける。SCP の本文は読んでいないので、拒否の条件そのものは**未確認**。
 - 文書が挙げる 3 つの原因（利用目的フォームの未提出、Marketplace の購読、モデルが利用不可）とは別の原因。
 
-読み取り専用の確認（`aws bedrock list-inference-profiles --profile training --region ap-northeast-1`）で見えた、ACTIVE の `SYSTEM_DEFINED` プロファイル（Sonnet 4.6 と Haiku のみ絞った一覧）:
+読み取り専用の確認（`aws bedrock list-inference-profiles --profile <プロファイル> --region ap-northeast-1`）で見えた、ACTIVE の `SYSTEM_DEFINED` プロファイル（Sonnet 4.6 と Haiku のみ絞った一覧）:
 
 - Sonnet 4.6: `global.anthropic.claude-sonnet-4-6`、`jp.anthropic.claude-sonnet-4-6`
 - Haiku: `global.anthropic.claude-haiku-4-5-20251001-v1:0`、`jp.anthropic.claude-haiku-4-5-20251001-v1:0`、`global.anthropic.claude-haiku-5-5`、`jp.anthropic.claude-haiku-5-5`、`apac.anthropic.claude-3-haiku-20240307-v1:0`
@@ -660,7 +660,7 @@ User: arn:aws:sts::<アカウント ID>:assumed-role/<SSO ロール名>/<SSO ユ
 
 #### `jp.` の Sonnet 4.6 の単発確認（Blocks を通さない）
 
-- 条件: `@aws-blocks` を通さず、リポジトリの `node_modules` にある `@aws-sdk/client-bedrock-runtime` の `ConverseStreamCommand` を 1 回。プロファイル `training`、リージョン `ap-northeast-1`、モデル ID `jp.anthropic.claude-sonnet-4-6`（`aws bedrock list-inference-profiles` で見えた ID）、プロンプト「Reply with the single word OK.」、`maxTokens` 16。アカウント所有者の承認のもとで実施。
+- 条件: `@aws-blocks` を通さず、リポジトリの `node_modules` にある `@aws-sdk/client-bedrock-runtime` の `ConverseStreamCommand` を 1 回。プロファイル `<プロファイル>`、リージョン `ap-northeast-1`、モデル ID `jp.anthropic.claude-sonnet-4-6`（`aws bedrock list-inference-profiles` で見えた ID）、プロンプト「Reply with the single word OK.」、`maxTokens` 16。アカウント所有者の承認のもとで実施。
 - 結果: 成功。テキストは「OK」、使用トークンは入力 14 / 出力 4、最初の delta まで 1,392 ms、全体で 1,400 ms。1 回だけの値で、時間にはクライアントの準備と SSO 認証情報の解決を含むため、このセクションのページ計測とは比べられない。
 - ストリーミング呼び出しは、`global.` で拒否された IAM アクション（`bedrock:InvokeModelWithResponseStream`）と同じものを使う。
 - このマシンの AWS CLI には `bedrock-runtime` のストリーミング用サブコマンドが無いので、SDK を使った。
@@ -671,8 +671,8 @@ User: arn:aws:sts::<アカウント ID>:assumed-role/<SSO ロール名>/<SSO ユ
 
 - モデル ID は `jp.anthropic.claude-haiku-5-5`。`BedrockModels` に Haiku 5.5 や `jp.` のプリセットは無く（`FAST` は `global.…haiku-4-5-20251001-v1:0` を指す。`models.d.ts` で確認）、`{ provider: 'bedrock', modelId: 'jp.anthropic.claude-haiku-5-5' }` を明示の文字列で渡した。`model.deployed` と `model.local` に同じ値を書いた。デプロイしたアプリでも同じ指定が要る（デプロイ側の実行ロールが呼べるかは**未確認**。SCP が全プリンシパルに及ぶなら同じ拒否・許可になるはずだが、確かめていない）。
 - 選んだ理由は、`list-inference-profiles` に出た Haiku の `jp.` のうち、世代が新しい方だったこと（利用者の指示）。`jp.…haiku-4-5-…` は試していない。
-- リージョンは、コードで指定しておらず、AWS SDK がプロファイル `training`（ap-northeast-1）から決めたはず。実際に使われたリージョンは確認していない。
-- 認証情報は、`AWS_PROFILE=training npm run dev` で起動した dev サーバーが AWS SDK の既定の認証情報の連鎖から取る。エラーメッセージのロールが `AWSReservedSSO_AWSAdministratorAccess_*` だったので、dev サーバーにプロファイルは届いている。
+- リージョンは、コードで指定しておらず、AWS SDK がプロファイル `<プロファイル>`（ap-northeast-1）から決めたはず。実際に使われたリージョンは確認していない。
+- 認証情報は、`AWS_PROFILE=<プロファイル> npm run dev` で起動した dev サーバーが AWS SDK の既定の認証情報の連鎖から取る。エラーメッセージのロールが `<SSO ロール名>` だったので、dev サーバーにプロファイルは届いている。
 
 #### ストリーミングの証拠
 
