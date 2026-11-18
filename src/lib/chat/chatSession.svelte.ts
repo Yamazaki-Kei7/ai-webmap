@@ -7,11 +7,12 @@ import {
   clientToolRequestSchema,
   fitToolResults,
   toolError,
+  toolNameSchema,
   type ClientToolResult,
-  type ToolErrorCode,
   type ToolName,
   type ToolResultData
 } from '../../../shared/toolProtocol';
+import type { ActivityCode } from './chatPanelState';
 import type { ConversationStore } from './conversationStore';
 import type { ToolExecutor } from './toolExecutor';
 
@@ -28,7 +29,7 @@ export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: str
 export type OpenConversationResult = 'opened' | 'notFound' | 'failed';
 
 /** `code` is why a failed call failed (the code of the result the model is given). */
-export type ToolActivity = { id: string; tool: ToolName; state: 'running' | 'done' | 'failed'; code?: ToolErrorCode };
+export type ToolActivity = { id: string; tool: ToolName; state: 'running' | 'done' | 'failed'; code?: ActivityCode };
 
 export interface ChatSession {
   readonly messages: ChatMessage[];
@@ -96,6 +97,11 @@ type Conversation = {
   interrupted: boolean;
   /** The turn ended in a failure after raising interrupts: the server may still hold them pending. */
   unsettled: boolean;
+  /**
+   * The `tool-result` chunks still to come for the calls this session answered, by tool. A result beyond them is of a call the
+   * server answered itself (it never raised an interrupt for it): the browser did not run it, so the user would not see it.
+   */
+  awaitedResults: Map<ToolName, number>;
   /** Its history is being loaded: the interrupts that notifies are not run (they are answered `SESSION_RESET` once it is loaded). */
   restoring: boolean;
   /** Opened from a saved conversation whose pending calls could not be answered: the next `send` tries once more before it leaves it. */
@@ -135,6 +141,8 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
   let messages = $state<ChatMessage[]>([]);
   let loading = $state(false);
   let activity = $state<ToolActivity[]>([]);
+  /** Numbers the calls the server refused, so that each has its own line. */
+  let refusedCalls = 0;
   let error = $state<string | null>(null);
 
   const conversations = new Set<Conversation>();
@@ -203,11 +211,12 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
       },
       onChunk: (chunk) => {
         if (chunk.type === 'done') endTurn(conversation);
+        else if (chunk.type === 'tool-result') noteToolResult(conversation, chunk.toolName);
       },
       onError: (message, cause) => endTurn(conversation, cause instanceof Error ? cause : new Error(message)),
       onInterrupt: (interrupts) => handleInterrupts(conversation, interrupts)
     });
-    const conversation: Conversation = { chat, discarded: false, turnOpen: false, handling: new Set(), answered: new Set(), interrupted: false, unsettled: false, restoring: false, reopened: false };
+    const conversation: Conversation = { chat, discarded: false, turnOpen: false, handling: new Set(), answered: new Set(), interrupted: false, unsettled: false, awaitedResults: new Map(), restoring: false, reopened: false };
     conversations.add(conversation);
     return conversation;
   }
@@ -237,6 +246,7 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
   /** The turn is over (`done`, or a failure: an `Error` is described by its name, a string is the message as it is). A discarded conversation has nothing more to do. */
   function endTurn(conversation: Conversation, failure?: Error | string): void {
     conversation.turnOpen = false;
+    conversation.awaitedResults.clear();
     // The server says it holds interrupts of this conversation (the answer to the stream request may have been lost), or the turn raised some and failed.
     if (failure instanceof Error && failure.name === conversationErrors.InterruptsPending) conversation.unsettled = true;
     if (failure !== undefined && conversation.interrupted) conversation.unsettled = true;
@@ -267,13 +277,30 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     return settled;
   }
 
-  function track(conversation: Conversation, id: string, tool: ToolName, state: ToolActivity['state'], code?: ToolErrorCode): void {
+  function track(conversation: Conversation, id: string, tool: ToolName, state: ToolActivity['state'], code?: ActivityCode): void {
     if (conversation.discarded) return;
     const known = activity.find((entry) => entry.id === id);
     if (known) {
       known.state = state;
       known.code = code;
     } else activity.push({ id, tool, state, code });
+  }
+
+  /**
+   * A `tool-result` chunk. The server publishes one for every call it finished, but none for a call it paused on an interrupt until
+   * the answer came. So a result the answers do not account for is a call the server refused itself (SQL guard, input check):
+   * the chunk does not say why, so the line carries one reason.
+   */
+  function noteToolResult(conversation: Conversation, name: string | undefined): void {
+    const parsed = toolNameSchema.safeParse(name);
+    if (!parsed.success) return;
+    const awaited = conversation.awaitedResults.get(parsed.data) ?? 0;
+    if (awaited > 0) {
+      conversation.awaitedResults.set(parsed.data, awaited - 1);
+      return;
+    }
+    refusedCalls += 1;
+    track(conversation, `${chatConfig.serverRejectedCode}:${refusedCalls}`, parsed.data, 'failed', chatConfig.serverRejectedCode);
   }
 
   /** The tool call of one interrupt, answered as the result the model reads. */
@@ -314,6 +341,12 @@ export function createChatSession(deps: ChatSessionDeps): ChatSession {
     }
     // Disposed, or the conversation closed (a reset ended its turn), while the calls ran: its subscriptions are closed, nothing more is sent.
     if (disposed || !conversations.has(conversation)) return;
+    if (!conversation.discarded) {
+      for (const interrupt of interrupts) {
+        const request = clientToolRequestSchema.safeParse(interrupt.reason);
+        if (request.success) conversation.awaitedResults.set(request.data.tool, (conversation.awaitedResults.get(request.data.tool) ?? 0) + 1);
+      }
+    }
     const accepted = await conversation.chat.sendMessage({ interruptResponses: responses });
     if (!accepted) endTurn(conversation, chatConfig.text.answerNotSent);
   }

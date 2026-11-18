@@ -229,6 +229,51 @@ describe('createChatSession', () => {
     session.dispose();
   });
 
+  it('shows a call the server answered itself (its guard or schema check refused it before any interrupt) as failed, once per result', async () => {
+    const fake = fakeApi();
+    const session = makeSession(fake);
+    await sendAndStart(session, fake);
+    fake.emit('conversation-1', { type: 'tool-call', toolName: 'runQuery', input: { sql: 'SELECT 1' } });
+    fake.emit('conversation-1', { type: 'tool-result', toolName: 'runQuery' });
+    fake.emit('conversation-1', { type: 'tool-call', toolName: 'addLayer', input: {} });
+    fake.emit('conversation-1', { type: 'tool-result', toolName: 'addLayer' });
+    await vi.waitFor(() => expect(session.activity).toHaveLength(2));
+    expect(session.activity.map(({ tool, state, code }) => ({ tool, state, code }))).toEqual([
+      { tool: 'runQuery', state: 'failed', code: chatConfig.serverRejectedCode },
+      { tool: 'addLayer', state: 'failed', code: chatConfig.serverRejectedCode }
+    ]);
+    expect(new Set(session.activity.map(({ id }) => id)).size).toBe(2);
+    session.dispose();
+  });
+
+  it('does not count the result of a call the browser ran as one the server refused', async () => {
+    const fake = fakeApi();
+    const session = makeSession(fake);
+    await sendAndStart(session, fake);
+    fake.emit('conversation-1', interruptChunk(interruptOf('i1', setViewRequest)));
+    await vi.waitFor(() => expect(session.activity).toEqual([{ id: 'i1', tool: 'setView', state: 'done' }]));
+    await vi.waitFor(() => expect(fake.resumes).toHaveLength(1));
+    // After the resume, the server reports the result of the answered call; a second result of the same tool is a refused one.
+    fake.emit('conversation-1', { type: 'tool-result', toolName: 'setView' });
+    await new Promise((done) => setTimeout(done, 20));
+    expect(session.activity).toEqual([{ id: 'i1', tool: 'setView', state: 'done' }]);
+    fake.emit('conversation-1', { type: 'tool-result', toolName: 'setView' });
+    await vi.waitFor(() => expect(session.activity).toHaveLength(2));
+    expect(session.activity[1]).toMatchObject({ tool: 'setView', state: 'failed', code: chatConfig.serverRejectedCode });
+    session.dispose();
+  });
+
+  it('ignores a tool result that names no tool of this app', async () => {
+    const fake = fakeApi();
+    const session = makeSession(fake);
+    await sendAndStart(session, fake);
+    fake.emit('conversation-1', { type: 'tool-result', toolName: 'somethingElse' });
+    fake.emit('conversation-1', { type: 'tool-result' });
+    await new Promise((done) => setTimeout(done, 20));
+    expect(session.activity).toEqual([]);
+    session.dispose();
+  });
+
   it('marks a call whose result is an error as failed', async () => {
     const fake = fakeApi();
     const session = makeSession(fake, executorReturning({ ok: false, error: { code: 'SQL_ERROR', message: 'no' } }));

@@ -3,6 +3,11 @@
 import { conversationErrors } from './conversation';
 import { mapsErrors } from './maps';
 
+/** Sign-in throttling of the auth block (the block's own defaults): an account is locked after this many failed sign-ins within the window, for the lockout time (seconds). */
+export const authConfig = {
+  lockout: { maxAttempts: 5, windowSeconds: 900, lockoutSeconds: 900 }
+} as const;
+
 export const modelConfig = {
   modelId: 'jp.anthropic.claude-haiku-5-5'
 } as const;
@@ -324,6 +329,11 @@ const chatErrorTexts: Readonly<Record<string, string>> = {
 /** The chat session (`src/lib/chat/chatSession.svelte.ts`) and its panel (`src/lib/components/ChatPanel.svelte`). */
 export const chatConfig = {
   /**
+   * The code of a tool call the server refused itself (its SQL guard or schema check answers before any interrupt, so the browser
+   * never ran it): the stream tells only the tool's name, not why, so the line gives this one reason.
+   */
+  serverRejectedCode: 'SERVER_REJECTED',
+  /**
    * The store behind the conversation API is eventually consistent: a call that names an interrupt, or a conversation made a
    * moment ago, may be refused (409 / 404) until it has caught up. The call is made again after each of these waits (milliseconds),
    * one more time after the last, and then its error is given up.
@@ -382,6 +392,8 @@ export const chatConfig = {
       ENGINE_UNAVAILABLE: 'データエンジンが使えない',
       SESSION_RESET: '会話をやり直したため中止'
     },
+    /** The reason of a call the server refused (see `serverRejectedCode`). */
+    serverRejectedReason: 'サーバーが受け付けなかった',
     /** The part of the line for a failure: `（` reason `）`. */
     toolErrorWrap: ['（', '）'],
     /** The answer to a resumed turn could not be handed to the chat. */

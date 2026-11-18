@@ -92,6 +92,7 @@ describe('activityText with a code', () => {
     expect(activityText('addLayer', 'failed', 'TIMEOUT')).toBe('レイヤーの追加に失敗しました（時間切れ）');
     expect(activityText('addLayer', 'failed')).toBe('レイヤーの追加に失敗しました');
     expect(activityText('addLayer', 'done', 'TIMEOUT')).toBe('レイヤーを追加しました');
+    expect(activityText('runQuery', 'failed', chatConfig.serverRejectedCode)).toBe(`クエリの実行に失敗しました（${chatConfig.text.serverRejectedReason}）`);
   });
 });
 

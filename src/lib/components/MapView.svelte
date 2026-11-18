@@ -65,6 +65,7 @@
   <!-- The labels of a polygon layer sit in a second source of one point per feature (built once per data, see `labelPoint.ts`), so that a feature of many parts is named once. -->
   {#each sources as source (source.id)}
     <!-- `data` is a derived of its own: the source gets the data again only when it is another object (`setData` sends the whole GeoJSON to the worker). -->
+    <!-- Do not inline this: without the derived, every change of the map state re-sends the GeoJSON of every layer to the worker. Unit tests do not catch it. -->
     {@const data = source.data}
     <GeoJSONSource id={source.id} {data}>
       {#each source.layers as spec (spec.id)}

@@ -18,7 +18,7 @@ import {
   summarizeForLlm
 } from '../map/mapState.svelte';
 import type { MapView } from './mapView';
-import { answerToolRequest, createToolExecutor, type ToolExecutorDeps } from './toolExecutor';
+import { createToolExecutor, type ToolExecutorDeps } from './toolExecutor';
 
 const bytesOf = (value: object): number => new TextEncoder().encode(JSON.stringify(value)).length;
 
@@ -632,19 +632,5 @@ describe('createToolExecutor', () => {
     expect(success(await run(state, { tool: 'setView', input: { target: { type: 'center', center: [139, 35], zoom: 5 } } })).zoom).toBe(styleConfig.zoom.max);
     state.viewAfter = { center: [139, 35], zoom: -3 };
     expect(success(await run(state, { tool: 'setView', input: { target: { type: 'center', center: [139, 35], zoom: 5 } } })).zoom).toBe(styleConfig.zoom.min);
-  });
-
-  describe('answerToolRequest', () => {
-    it('is the JSON string of the result', async () => {
-      const execute = createToolExecutor(state.deps);
-      const request: ClientToolRequest = { tool: 'runQuery', input: { sql: 'SELECT n FROM t' } };
-      expect(JSON.parse(await answerToolRequest(execute, request))).toEqual(await execute(request));
-    });
-
-    it('is the JSON of an error too', async () => {
-      const execute = createToolExecutor(state.deps);
-      const text = await answerToolRequest(execute, JSON.parse('{"tool":"nope"}'));
-      expect(JSON.parse(text)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-    });
   });
 });

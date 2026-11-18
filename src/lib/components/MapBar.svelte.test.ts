@@ -338,6 +338,44 @@ describe('save dialog', () => {
       expect(maybe('map-save-error')).toBeNull();
     });
 
+    /** A save whose dialog was closed meanwhile and that then failed: the bar shows the error. */
+    async function failedAfterClose(): Promise<void> {
+      placed();
+      let fail: (error: Error) => void = () => undefined;
+      api.saveMap.mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)));
+      render(makeFlow());
+      await click('map-save');
+      type(byId<HTMLInputElement>('save-title'), '東京の駅');
+      await click('save-submit');
+      byId<HTMLDialogElement>('save-dialog').close();
+      flushSync();
+      fail(named(mapsErrors.Conflict));
+      await settle();
+      expect(maybe('map-save-error')).not.toBeNull();
+    }
+
+    it('drops the failure from the bar when a new map is started', async () => {
+      await failedAfterClose();
+      await click('map-new');
+      await click('discard-new-dialog-confirm');
+      await settle();
+      expect(maybe('map-save-error')).toBeNull();
+    });
+
+    it('drops the failure from the bar when another map is opened', async () => {
+      await failedAfterClose();
+      await click('map-open');
+      await settle();
+      await click('open-item-open');
+      await settle();
+      await click('discard-open-dialog-confirm');
+      await settle();
+      release();
+      await settle();
+      expect(isOpen('open-dialog')).toBe(false);
+      expect(maybe('map-save-error')).toBeNull();
+    });
+
     it('does not show it in the bar while the dialog is open (it is in the dialog)', async () => {
       placed();
       api.saveMap.mockRejectedValueOnce(named(mapsErrors.Conflict));

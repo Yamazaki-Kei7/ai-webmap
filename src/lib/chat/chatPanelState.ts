@@ -68,12 +68,16 @@ export function isNearBottom({ scrollTop, clientHeight, scrollHeight }: ScrollPo
 
 export type ToolActivityState = 'running' | 'done' | 'failed';
 
+/** Why a call failed: a tool error of the browser, or a refusal by the server (`serverRejectedCode`). */
+export type ActivityCode = ToolErrorCode | typeof chatConfig.serverRejectedCode;
+
 /** The line of a tool call; a failed one says why (`code`) in words. */
-export function activityText(tool: ToolName, state: ToolActivityState, code?: ToolErrorCode): string {
+export function activityText(tool: ToolName, state: ToolActivityState, code?: ActivityCode): string {
   const phrase = chatConfig.text.activity[tool][state];
   if (state !== 'failed' || code === undefined) return phrase;
   const [open, close] = chatConfig.text.toolErrorWrap;
-  return `${phrase}${open}${chatConfig.text.toolErrorCodes[code]}${close}`;
+  const reason = code === chatConfig.serverRejectedCode ? chatConfig.text.serverRejectedReason : chatConfig.text.toolErrorCodes[code];
+  return `${phrase}${open}${reason}${close}`;
 }
 
 /** The length the counter and the send check share: the trimmed message, in code points. */

@@ -40,6 +40,7 @@
   function startNew(): void {
     newOpen = false;
     notice = null;
+    saveFailure = null;
     flow.startNew();
   }
 </script>
@@ -102,7 +103,16 @@
     notice = text.saved;
   }}
 />
-<OpenMapDialog open={openOpen} {flow} {unsaved} onclose={() => (openOpen = false)} onopened={() => (openOpen = false)} />
+<OpenMapDialog
+  open={openOpen}
+  {flow}
+  {unsaved}
+  onclose={() => (openOpen = false)}
+  onopened={() => {
+    openOpen = false;
+    saveFailure = null;
+  }}
+/>
 <ConfirmDialog
   open={newOpen}
   title={text.newMap}

@@ -12,7 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AuthBasic, AuthBasicErrors, KVStore, Scope, type BlocksContext } from '@aws-blocks/blocks';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { authOptions } from '../../aws-blocks/auth-options.js';
 import { passwordPolicy } from '../../aws-blocks/password-policy.js';
+import { authConfig } from '../../shared/config.js';
 import { decodeItemRecord, decodeRecordJson } from './test-support.js';
 import { buildUserItem, keyAttribute, valueAttribute } from './user-record.js';
 
@@ -60,7 +62,7 @@ function usersStoreOf(root: Scope): KVStore {
 }
 
 function newAuth(root: Scope): AuthBasic {
-  return new AuthBasic(root, authId, { passwordPolicy });
+  return new AuthBasic(root, authId, authOptions);
 }
 
 describe('record builder against the auth block (local mock store)', () => {
@@ -116,6 +118,18 @@ describe('record builder against the auth block (local mock store)', () => {
     expect(user.createdAt).toBe(now.toISOString());
     expect(ctx.response.headers.get('Set-Cookie')).toContain('HttpOnly');
     await expect(auth.signIn('someone', `${password}x`, context())).rejects.toMatchObject({ name: AuthBasicErrors.InvalidCredentials });
+  });
+
+  it('locks an account after the configured number of failed sign-ins, and a correct password does not get in while it is locked', async () => {
+    const root = freshRoot();
+    const built = await buildUserItem({ username: 'someone', password, now });
+    if (!built.ok) throw new Error(built.message);
+    await usersStoreOf(root).put(built.item[keyAttribute].S, JSON.parse(built.item[valueAttribute].S));
+    const auth = newAuth(root);
+    for (let attempt = 0; attempt < authConfig.lockout.maxAttempts; attempt++) {
+      await expect(auth.signIn('someone', `${password}x`, context())).rejects.toMatchObject({ name: AuthBasicErrors.InvalidCredentials });
+    }
+    await expect(auth.signIn('someone', password, context())).rejects.toMatchObject({ name: AuthBasicErrors.AccountLocked });
   });
 
   it('keeps names exact: a user created as " a " cannot sign in as "a" or "A"', async () => {

@@ -228,8 +228,3 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     return result;
   };
 }
-
-/** The answer of an interrupt: the JSON string of the (fitted) result of the request. */
-export async function answerToolRequest(execute: ToolExecutor, request: ClientToolRequest): Promise<string> {
-  return JSON.stringify(await execute(request));
-}
