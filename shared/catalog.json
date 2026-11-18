@@ -1,0 +1,648 @@
+[
+  {
+    "id": "municipalities",
+    "title": "市区町村の境界",
+    "description": "全国の市区町村の境界（面）。1 行は 1 つの市区町村（muni_code 1 つにつき 1 行）。",
+    "file": "municipalities.parquet",
+    "geometryType": "polygon",
+    "featureCount": 1898,
+    "bbox": [
+      122.94015,
+      24.04587,
+      153.98656,
+      45.55563
+    ],
+    "source": {
+      "name": "国土数値情報（行政区域データ）（国土交通省）",
+      "url": "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N03-2026.html",
+      "year": "2026年（令和8年）版（1月1日時点）",
+      "license": "オープンデータ（CC BY 4.0）。同梱メタデータに測量法の承認の記載があり、技術検証の範囲でのみ利用する（一般公開・配布・商用の前に、国土交通省へ測量法上の扱いを問い合わせる）"
+    },
+    "columns": [
+      {
+        "name": "muni_code",
+        "type": "string",
+        "description": "全国地方公共団体コード（5 桁の文字列。例: 01101）。先頭 2 桁が都道府県コード。municipalities.muni_code と同じ形で、結合キーになる"
+      },
+      {
+        "name": "pref_name",
+        "type": "string",
+        "description": "都道府県名。都・道・府・県をつけた名称（例: 北海道、東京都、大阪府、青森県）で、すべてのテーブルで同じ表記。クエリでは、この表記のまま一致させる",
+        "topValues": [
+          {
+            "value": "北海道",
+            "count": 194
+          },
+          {
+            "value": "長野県",
+            "count": 77
+          },
+          {
+            "value": "埼玉県",
+            "count": 72
+          },
+          {
+            "value": "大阪府",
+            "count": 72
+          },
+          {
+            "value": "福岡県",
+            "count": 72
+          },
+          {
+            "value": "愛知県",
+            "count": 69
+          },
+          {
+            "value": "東京都",
+            "count": 62
+          },
+          {
+            "value": "千葉県",
+            "count": 59
+          },
+          {
+            "value": "福島県",
+            "count": 59
+          },
+          {
+            "value": "神奈川県",
+            "count": 58
+          }
+        ],
+        "distinctCount": 47
+      },
+      {
+        "name": "city_name",
+        "type": "string",
+        "description": "市区町村名。政令指定都市の区の行では区名を含まない市名（例: 札幌市）。特別区（東京 23 区）は区名。都道府県をまたいで同じ名前がある（25 名。例: 府中市は東京都と広島県）。市区町村を一意に決めるのは muni_code だけで、集計と結合は muni_code で行い、名前は表示に使う。名前で絞るときは必ず pref_name を含める。pref_name と city_name で、政令指定都市は全区の行が選ばれる。北海道の泊村は 2 つあり、muni_code は 01403 と 01696"
+      },
+      {
+        "name": "muni_name",
+        "type": "string",
+        "description": "市区町村名。政令指定都市の区は市名に区名を続ける（例: 札幌市中央区）。区のない市町村と特別区は city_name と同じ。都道府県をまたいで同じ名前がある（25 名。例: 府中市は東京都と広島県）。市区町村を一意に決めるのは muni_code だけで、集計と結合は muni_code で行い、名前は表示に使う。名前で絞るときは必ず pref_name を含める。pref_name と muni_name で 1 つの市区町村に決まる（例外は 北海道の泊村は 2 つあり、muni_code は 01403 と 01696）"
+      }
+    ],
+    "notes": [
+      "政令指定都市は区ごとに 1 行で、市全体の行はない。",
+      "市区町村名は都道府県をまたいで重複する（25 名。例: 府中市は東京都と広島県、伊達市は北海道と福島県）。市区町村を一意に決めるのは muni_code だけ。集計と結合は muni_code で行い、名前は表示用。1 つの市区町村に名前で絞るときは pref_name と muni_name を使う（北海道の泊村だけは 2 つあるので muni_code を使う）。pref_name と city_name では、政令指定都市の全区の行が選ばれる。",
+      "所属未定地（コードが「000」で終わる行）は含まない。",
+      "境界は簡素化してあり、面積が 0.1 km² 未満で他の市区町村に接しない小さな島は除いてある。面積の計算や、精密な境界を使う解析には使わない。",
+      "点のデータ（land_prices、stations、schools）の市区町村別の集計は、空間結合ではなく muni_code の結合で行う（全行に muni_code が入っていて、NULL はない）。簡素化した境界では、境界の近くで点が別の市区町村に入ることがある。"
+    ]
+  },
+  {
+    "id": "prefectures",
+    "title": "都道府県の境界",
+    "description": "全国の都道府県の境界（面）。1 行は 1 つの都道府県。municipalities と同じ行政区域のデータから、市区町村を都道府県で統合して作る。",
+    "file": "prefectures.parquet",
+    "geometryType": "polygon",
+    "featureCount": 47,
+    "bbox": [
+      122.94015,
+      24.04587,
+      153.98656,
+      45.55563
+    ],
+    "source": {
+      "name": "国土数値情報（行政区域データ）（国土交通省）",
+      "url": "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N03-2026.html",
+      "year": "2026年（令和8年）版（1月1日時点）",
+      "license": "オープンデータ（CC BY 4.0）。同梱メタデータに測量法の承認の記載があり、技術検証の範囲でのみ利用する（一般公開・配布・商用の前に、国土交通省へ測量法上の扱いを問い合わせる）"
+    },
+    "columns": [
+      {
+        "name": "pref_code",
+        "type": "string",
+        "description": "都道府県コード（2 桁の文字列。例: 01）。municipalities.muni_code の先頭 2 桁と同じ"
+      },
+      {
+        "name": "pref_name",
+        "type": "string",
+        "description": "都道府県名。都・道・府・県をつけた名称（例: 北海道、東京都、大阪府、青森県）で、すべてのテーブルで同じ表記。クエリでは、この表記のまま一致させる"
+      }
+    ],
+    "notes": [
+      "境界は簡素化した市区町村を統合したもので、小さな島は除いてある。面積の計算や、精密な境界を使う解析には使わない。",
+      "点のデータ（land_prices、stations、schools）の都道府県別の集計は、空間結合ではなく pref_name で行う（全行に pref_name が入っていて、NULL はない）。簡素化した境界では、境界の近くで点が別の都道府県に入ることがある。"
+    ]
+  },
+  {
+    "id": "land_prices",
+    "title": "地価公示（標準地）",
+    "description": "地価公示の標準地の点。1 行は標準地 1 か所で、2026 年（令和 8 年）1 月 1 日時点の価格が入る。",
+    "file": "land_prices.parquet",
+    "geometryType": "point",
+    "featureCount": 25565,
+    "bbox": [
+      124.14933,
+      24.33711,
+      145.60059,
+      45.42196
+    ],
+    "source": {
+      "name": "国土数値情報（地価公示データ）（国土交通省）",
+      "url": "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-L01-2026.html",
+      "year": "2026年（令和8年）版（1月1日時点）",
+      "license": "オープンデータ（CC BY 4.0）"
+    },
+    "columns": [
+      {
+        "name": "price_yen_per_m2",
+        "type": "number",
+        "description": "地価公示価格（整数）",
+        "unit": "円/㎡",
+        "stats": {
+          "min": 470,
+          "max": 67100000
+        }
+      },
+      {
+        "name": "yoy_change_pct",
+        "type": "number",
+        "description": "対前年変動率（小数第 1 位）。NULL は、新設・選定替えで当該年に追加された標準地と、隔年調査の休止地点",
+        "unit": "%",
+        "stats": {
+          "min": -6.3,
+          "max": 44.1
+        }
+      },
+      {
+        "name": "land_use",
+        "type": "string",
+        "description": "用途区分のラベル（日本語の文字列）。利用の現況ではない",
+        "topValues": [
+          {
+            "value": "住宅地",
+            "count": 17890
+          },
+          {
+            "value": "商業地",
+            "count": 6509
+          },
+          {
+            "value": "工業地",
+            "count": 1050
+          },
+          {
+            "value": "宅地見込地",
+            "count": 70
+          },
+          {
+            "value": "林地",
+            "count": 46
+          }
+        ],
+        "distinctCount": 5
+      },
+      {
+        "name": "address",
+        "type": "string",
+        "description": "所在地番。都道府県名から始まり、そのあとに全角空白が入る。数字は全角（例: 北海道　札幌市中央区大通西２８丁目２０３番１０）"
+      },
+      {
+        "name": "muni_code",
+        "type": "string",
+        "description": "標準地の属性にある全国地方公共団体コード（5 桁の文字列。例: 01101）。先頭 2 桁が都道府県コード。municipalities.muni_code と同じ形で、結合キーになる"
+      },
+      {
+        "name": "city_name",
+        "type": "string",
+        "description": "市区町村名（municipalities.city_name と同じ。政令指定都市の区は市名）。都道府県をまたいで同じ名前がある（25 名。例: 府中市は東京都と広島県）。市区町村を一意に決めるのは muni_code だけで、集計と結合は muni_code で行い、名前は表示に使う。名前で絞るときは必ず pref_name を含める。pref_name と city_name で、政令指定都市はその全区の点が選ばれる（1 つの区に絞るには、muni_code で municipalities を結合し、その muni_name で絞る）。北海道の泊村は 2 つあり、muni_code は 01403 と 01696"
+      },
+      {
+        "name": "pref_name",
+        "type": "string",
+        "description": "都道府県名。都・道・府・県をつけた名称（例: 北海道、東京都、大阪府、青森県）で、すべてのテーブルで同じ表記。クエリでは、この表記のまま一致させる"
+      }
+    ],
+    "notes": [
+      "yoy_change_pct が NULL の行は、変動がないのではなく、前年と比べられない標準地。NULL を 0 として扱わない。NULL でない 0.0 は本当の 0.0。",
+      "価格の偏りは大きい（最小 470、中央値 83,000、最大 67,100,000）。階級に分けるときは、等間隔ではなく分位数を使う。",
+      "land_use は用途区分で、利用の現況ではない。",
+      "address は都道府県名のあとに全角空白が入り、数字は全角（例: 北海道　札幌市中央区大通西２８丁目２０３番１０）。schools.address は都道府県名のあとに空白がなく、数字は半角（17 件は、番地などのあとに全角空白がある）。LIKE で合わせるときは、それぞれの形で書く。",
+      "市区町村別・都道府県別の集計は、空間結合ではなく muni_code と pref_name で行う（全行に入っていて、NULL はない）。簡素化した境界では、境界の近くの点が別の側に入ることがある。"
+    ]
+  },
+  {
+    "id": "stations",
+    "title": "駅別乗降客数",
+    "description": "駅別乗降客数（2024 年度）の点。1 行は駅 × 路線の線 1 本で、点はその線の重心。",
+    "file": "stations.parquet",
+    "geometryType": "point",
+    "featureCount": 10263,
+    "bbox": [
+      127.65228,
+      26.19326,
+      145.58304,
+      45.41634
+    ],
+    "source": {
+      "name": "国土数値情報（駅別乗降客数データ）（国土交通省）",
+      "url": "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-S12-2024.html",
+      "year": "2024年度（令和6年度）版",
+      "license": "オープンデータ（CC BY 4.0）"
+    },
+    "columns": [
+      {
+        "name": "station_name",
+        "type": "string",
+        "description": "駅名（例: 渋谷）。同名の別の駅がある"
+      },
+      {
+        "name": "operator",
+        "type": "string",
+        "description": "運営会社名（例: 東日本旅客鉄道、東京地下鉄）。完全に一致させる",
+        "topValues": [
+          {
+            "value": "東日本旅客鉄道",
+            "count": 1813
+          },
+          {
+            "value": "西日本旅客鉄道",
+            "count": 1265
+          },
+          {
+            "value": "九州旅客鉄道",
+            "count": 628
+          },
+          {
+            "value": "東海旅客鉄道",
+            "count": 440
+          },
+          {
+            "value": "北海道旅客鉄道",
+            "count": 338
+          },
+          {
+            "value": "近畿日本鉄道",
+            "count": 310
+          },
+          {
+            "value": "名古屋鉄道",
+            "count": 295
+          },
+          {
+            "value": "四国旅客鉄道",
+            "count": 271
+          },
+          {
+            "value": "東武鉄道",
+            "count": 219
+          },
+          {
+            "value": "東京地下鉄",
+            "count": 183
+          }
+        ],
+        "distinctCount": 178
+      },
+      {
+        "name": "line_name",
+        "type": "string",
+        "description": "路線名（例: 東横線、山手線）。同じ路線名が複数の運営会社にある"
+      },
+      {
+        "name": "passengers_per_day",
+        "type": "number",
+        "description": "2024 年度の 1 日あたりの乗降客数（整数）。NULL は、データなし・非公開・他の路線の行にまとめて記載、のどれか",
+        "unit": "人/日",
+        "stats": {
+          "min": 0,
+          "max": 1770430
+        }
+      },
+      {
+        "name": "muni_code",
+        "type": "string",
+        "description": "全国地方公共団体コード（5 桁の文字列。例: 01101）。先頭 2 桁が都道府県コード。municipalities.muni_code と同じ形で、結合キーになる"
+      },
+      {
+        "name": "city_name",
+        "type": "string",
+        "description": "市区町村名（municipalities.city_name と同じ。政令指定都市の区は市名）。都道府県をまたいで同じ名前がある（25 名。例: 府中市は東京都と広島県）。市区町村を一意に決めるのは muni_code だけで、集計と結合は muni_code で行い、名前は表示に使う。名前で絞るときは必ず pref_name を含める。pref_name と city_name で、政令指定都市はその全区の点が選ばれる（1 つの区に絞るには、muni_code で municipalities を結合し、その muni_name で絞る）。北海道の泊村は 2 つあり、muni_code は 01403 と 01696"
+      },
+      {
+        "name": "pref_name",
+        "type": "string",
+        "description": "都道府県名。都・道・府・県をつけた名称（例: 北海道、東京都、大阪府、青森県）で、すべてのテーブルで同じ表記。クエリでは、この表記のまま一致させる"
+      }
+    ],
+    "notes": [
+      "1 行は駅 × 路線なので、乗り換え駅は路線ごとに行がある。行数は駅の数ではない。駅名だけで重複を除くと、同名の別の駅を 1 つにまとめてしまう。",
+      "点は駅の位置ではなく、元の線の重心。曲がった線では、重心が線から外れることがある。",
+      "passengers_per_day が NULL の行は 0 人ではない。NULL を 0 として扱わない。0 の行は本当の 0。",
+      "乗り換え駅では、1 つの路線の行に他の路線の分を含む値が入り、他の路線の行は NULL。路線別の値としては読めない。駅ごとの合計は、NULL でない行をそのまま足せばよい（二重には数えない）。",
+      "乗降客数は各事業者が独自に算出した値で、基準が統一されていない。東日本旅客鉄道と北海道旅客鉄道の無人駅はデータなし、九州旅客鉄道は上位 300 駅以外が非公開で、NULL になる。",
+      "2024 年度に駅がない行（廃線など）は含めない。",
+      "駅を一意に識別する列はない。同じ駅・運営会社・路線が複数の行になることがあり（10,263 行に対し station_name・operator・line_name の組は 10,153 種）、路線ごとや運営会社ごとの行数は駅の数より多くなる。同名の別の駅があるので、station_name だけでは駅を区別できない。station_name と muni_code の組も近似にすぎない（station_name と operator が同じで muni_code が複数ある組が 21 ある）。",
+      "運営会社名は stations と railways で一致するとは限らない（stations の 新京成電鉄 と 泉北高速鉄道 は railways にない）。operator と line_name の組での結合は行を落とす（stations の 596 組のうち 2 組が railways にない）。",
+      "市区町村別・都道府県別の集計は、空間結合ではなく muni_code と pref_name で行う（全行に入っていて、NULL はない）。簡素化した境界では、境界の近くの点が別の側に入ることがある。"
+    ]
+  },
+  {
+    "id": "railways",
+    "title": "鉄道路線",
+    "description": "鉄道路線の線。1 行は 1 つの路線（路線名・運営会社・鉄道区分・事業者種別が同じ区間をまとめたもの）。",
+    "file": "railways.parquet",
+    "geometryType": "line",
+    "featureCount": 607,
+    "bbox": [
+      127.65228,
+      26.19315,
+      145.59799,
+      45.41688
+    ],
+    "source": {
+      "name": "国土数値情報（鉄道データ）（国土交通省）",
+      "url": "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-2025.html",
+      "year": "2025年度（令和7年度）版（12月31日時点）",
+      "license": "オープンデータ（CC BY 4.0）"
+    },
+    "columns": [
+      {
+        "name": "line_name",
+        "type": "string",
+        "description": "路線名（例: いわて銀河鉄道線、東北線）。JR の部分名のことがあり、「東北本線」のような運行系統の名前とは合わないことがある"
+      },
+      {
+        "name": "operator",
+        "type": "string",
+        "description": "運営会社名（例: 東日本旅客鉄道、東京地下鉄）。完全に一致させる",
+        "topValues": [
+          {
+            "value": "東日本旅客鉄道",
+            "count": 69
+          },
+          {
+            "value": "西日本旅客鉄道",
+            "count": 51
+          },
+          {
+            "value": "近畿日本鉄道",
+            "count": 24
+          },
+          {
+            "value": "九州旅客鉄道",
+            "count": 23
+          },
+          {
+            "value": "名古屋鉄道",
+            "count": 20
+          },
+          {
+            "value": "北海道旅客鉄道",
+            "count": 14
+          },
+          {
+            "value": "東海旅客鉄道",
+            "count": 13
+          },
+          {
+            "value": "富山地方鉄道",
+            "count": 12
+          },
+          {
+            "value": "東武鉄道",
+            "count": 12
+          },
+          {
+            "value": "西武鉄道",
+            "count": 12
+          }
+        ],
+        "distinctCount": 177
+      },
+      {
+        "name": "operator_type",
+        "type": "string",
+        "description": "事業者種別のラベル（日本語の文字列）: JRの新幹線、JR在来線、公営鉄道、民営鉄道、第三セクター",
+        "topValues": [
+          {
+            "value": "民営鉄道",
+            "count": 283
+          },
+          {
+            "value": "JR在来線",
+            "count": 170
+          },
+          {
+            "value": "第三セクター",
+            "count": 101
+          },
+          {
+            "value": "公営鉄道",
+            "count": 44
+          },
+          {
+            "value": "JRの新幹線",
+            "count": 9
+          }
+        ],
+        "distinctCount": 5
+      },
+      {
+        "name": "railway_type",
+        "type": "string",
+        "description": "鉄道区分のラベル（日本語の文字列。例: 普通鉄道JR、普通鉄道、軌道、鋼索鉄道）",
+        "topValues": [
+          {
+            "value": "普通鉄道",
+            "count": 309
+          },
+          {
+            "value": "普通鉄道JR",
+            "count": 179
+          },
+          {
+            "value": "軌道",
+            "count": 69
+          },
+          {
+            "value": "鋼索鉄道",
+            "count": 21
+          },
+          {
+            "value": "案内軌条式鉄道",
+            "count": 10
+          },
+          {
+            "value": "案内軌条式",
+            "count": 8
+          },
+          {
+            "value": "跨座式モノレール",
+            "count": 5
+          },
+          {
+            "value": "懸垂式モノレール",
+            "count": 2
+          },
+          {
+            "value": "跨座式鉄道",
+            "count": 2
+          },
+          {
+            "value": "懸垂式鉄道",
+            "count": 1
+          },
+          {
+            "value": "浮上式",
+            "count": 1
+          }
+        ],
+        "distinctCount": 11
+      }
+    ],
+    "notes": [
+      "ジオメトリの型（LINESTRING と MULTILINESTRING）では、途切れた路線かどうかは分からない。MULTILINESTRING の約 9 割は、分岐・合流があるだけで、すべてつながっている。",
+      "同じ運営会社・同じ路線名でも、鉄道区分が区間で違えば 2 行になる（10 組）。路線の数や路線ごとの延長は、operator と line_name で集約する。",
+      "同じ line_name が複数の運営会社に現れる（例:「本線」）。line_name だけで絞らず、operator も使う。",
+      "線は 10 m の許容差で簡素化してある。線どうしの接続を使う解析（ST_Intersects や ST_Touches で「X 線と接続する路線」を求めるなど）には使わない（接していた路線の組の約 1 割が接しなくなっている）。総延長は簡素化前から −0.085% で、延長の集計には使える。",
+      "駅の位置は stations の座標とは別のデータで、stations の点が線の上にあるとは限らない。",
+      "運営会社名は stations と railways で一致するとは限らない（stations の 新京成電鉄 と 泉北高速鉄道 は railways にない。railways の泉北の線は 南海電気鉄道の「泉北線」で、えちぜん鉄道の 1 行は operator と line_name が入れ替わっている）。operator と line_name の組での結合は行を落とす（railways の 597 組のうち 3 組が stations にない）。"
+    ]
+  },
+  {
+    "id": "schools",
+    "title": "学校",
+    "description": "学校の点。1 行は学校 1 キャンパスで、キャンパスが複数ある学校は複数行になる。",
+    "file": "schools.parquet",
+    "geometryType": "point",
+    "featureCount": 56807,
+    "bbox": [
+      122.94354,
+      24.06172,
+      145.75011,
+      45.51395
+    ],
+    "source": {
+      "name": "国土数値情報（学校データ）（国土交通省）",
+      "url": "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-P29-2023.html",
+      "year": "2023年度（令和5年度）版",
+      "license": "オープンデータ（CC BY 4.0）"
+    },
+    "columns": [
+      {
+        "name": "school_name",
+        "type": "string",
+        "description": "学校名（例: 北海道教育大学附属函館幼稚園）"
+      },
+      {
+        "name": "school_type",
+        "type": "string",
+        "description": "学校分類のラベル（日本語の文字列。例: 小学校、中学校、高等学校、大学、幼稚園）",
+        "topValues": [
+          {
+            "value": "小学校",
+            "count": 18980
+          },
+          {
+            "value": "中学校",
+            "count": 9946
+          },
+          {
+            "value": "幼稚園",
+            "count": 8837
+          },
+          {
+            "value": "幼保連携型認定こども園",
+            "count": 6985
+          },
+          {
+            "value": "高等学校",
+            "count": 4943
+          },
+          {
+            "value": "専修学校",
+            "count": 3020
+          },
+          {
+            "value": "特別支援学校",
+            "count": 1229
+          },
+          {
+            "value": "大学",
+            "count": 1214
+          },
+          {
+            "value": "各種学校",
+            "count": 1015
+          },
+          {
+            "value": "短期大学",
+            "count": 311
+          },
+          {
+            "value": "義務教育学校",
+            "count": 209
+          },
+          {
+            "value": "高等専門学校",
+            "count": 61
+          },
+          {
+            "value": "中等教育学校",
+            "count": 57
+          }
+        ],
+        "distinctCount": 13
+      },
+      {
+        "name": "admin_type",
+        "type": "string",
+        "description": "設置者のラベル（日本語の文字列）: 国、都道府県、市区町村、民間、その他。民間は私立などを指す",
+        "topValues": [
+          {
+            "value": "市区町村",
+            "count": 32019
+          },
+          {
+            "value": "民間",
+            "count": 19574
+          },
+          {
+            "value": "都道府県",
+            "count": 4652
+          },
+          {
+            "value": "国",
+            "count": 525
+          },
+          {
+            "value": "その他",
+            "count": 37
+          }
+        ],
+        "distinctCount": 5
+      },
+      {
+        "name": "address",
+        "type": "string",
+        "description": "所在地。都道府県名から始まり、空白なしで市区町村名（郡名を含むことがある）が続く。数字は半角（例: 北海道函館市美原3-48-6）。pref_name と違う都道府県で始まる行が 6 行ある（例: 東京都町田市…で pref_name は神奈川県）。land_prices.address とは、都道府県名のあとに全角空白がなく、全角数字を使わない点で形が違う"
+      },
+      {
+        "name": "muni_code",
+        "type": "string",
+        "description": "全国地方公共団体コード（5 桁の文字列。例: 01101）。先頭 2 桁が都道府県コード。municipalities.muni_code と同じ形で、結合キーになる"
+      },
+      {
+        "name": "city_name",
+        "type": "string",
+        "description": "市区町村名（municipalities.city_name と同じ。政令指定都市の区は市名）。都道府県をまたいで同じ名前がある（25 名。例: 府中市は東京都と広島県）。市区町村を一意に決めるのは muni_code だけで、集計と結合は muni_code で行い、名前は表示に使う。名前で絞るときは必ず pref_name を含める。pref_name と city_name で、政令指定都市はその全区の点が選ばれる（1 つの区に絞るには、muni_code で municipalities を結合し、その muni_name で絞る）。北海道の泊村は 2 つあり、muni_code は 01403 と 01696"
+      },
+      {
+        "name": "pref_name",
+        "type": "string",
+        "description": "都道府県名。都・道・府・県をつけた名称（例: 北海道、東京都、大阪府、青森県）で、すべてのテーブルで同じ表記。クエリでは、この表記のまま一致させる"
+      }
+    ],
+    "notes": [
+      "1 行は学校 1 キャンパスなので、行数は学校の数ではない（学校名と所在地が同じ行も 2 組ある）。",
+      "開校中か休校中かを区別する列はない（元のデータの休校区分は、約半数が「調査なし」で、保持していない）。",
+      "中央区立の学校 3 件（中央区立泰明小学校、中央区立泰明幼稚園、中央区立城東小学校）は、元のデータの muni_code が千代田区（13101）で、city_name も千代田区になる。元のコードの誤りの可能性が高い。",
+      "浜松市の旧区のコード（22131〜22137）の学校は、座標から新区のコード（22138〜22140）に付け替えてある。",
+      "市区町村別・都道府県別の集計は、空間結合ではなく muni_code と pref_name で行う（全行に入っていて、NULL はない）。簡素化した境界では、境界の近くの点が別の側に入ることがある。"
+    ]
+  }
+]

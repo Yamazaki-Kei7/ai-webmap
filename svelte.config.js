@@ -12,7 +12,7 @@ const config = {
       // Type-check the backend and tests alongside the app. Paths are relative
       // to the generated .svelte-kit/tsconfig.json.
       config: (tsconfig) => {
-        tsconfig.include.push('../aws-blocks/**/*', '../test/**/*', '../.blocks/**/*.d.ts');
+        tsconfig.include.push('../aws-blocks/**/*', '../shared/**/*', '../scripts/seed/**/*', '../scripts/admin/**/*', '../scripts/data/**/*', '../vitest.config.ts', '../test/**/*', '../.blocks/**/*.d.ts');
       }
     }
   }

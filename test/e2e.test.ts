@@ -1,74 +1,127 @@
 /**
- * End-to-end tests — tests the API via direct imports (same typed client the frontend uses).
+ * End-to-end tests — call the backend through the typed client the frontend uses.
  *
  * Run:  npm run test:e2e
  *
  * Structure:
- *   - Setup (starts dev server, imports client) — don't touch
- *   - Auth tests
- *   - CRUD tests
- *   - Conditional write / conflict tests
- *   - Realtime tests
+ *   - Setup (seeds the user, starts the dev server, imports the client) — don't touch
+ *   - Client namespaces: exactly `api` and `authApi`
+ *   - Auth tests: sign-up and the other account actions are rejected (signed out
+ *     and signed in); the seeded users can sign in and out
+ *   - Access tests: every `api` method refuses a signed-out caller and a signed-in
+ *     user who is not on the allowed list; allowed users and admins are served
+ *   - Dataset tests: signed download URLs for allowed users; upload URLs for admins only; an upload
+ *     round trip and the refusal of a wrong content type (they replace one real object and put it back)
  *
- * To add tests: copy any test block, rename, change the assertion. The setup
- * boilerplate handles server lifecycle — you just call api.* methods.
+ * The seeded users (admin, allowed, denied) and the local lists are created by
+ * `npm run seed:users` before the dev server starts (see README). When a dev
+ * server is already running, nothing is seeded.
  */
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
 import { installCookieJar, isServerRunning } from '@aws-blocks/blocks/utils';
-import type { api as ApiType, authApi as AuthApiType } from 'aws-blocks';
+// Imported from the block itself: it is the only entry that exports the error names under the browser condition.
+import { AuthBasicErrors } from '@aws-blocks/bb-auth-basic';
+import { ApiError } from '@aws-blocks/blocks/client';
+import { z } from 'zod';
+import type { AgentStreamChunk } from '@aws-blocks/blocks';
+import type { api as ApiClientType, authApi as AuthApiType } from 'aws-blocks';
+import { llmModeEnvName, llmModes, type LlmMode } from '../aws-blocks/llm-mode.js';
+import { accessErrors, accessStatus } from '../shared/access.js';
+import { agentConfig, mapConfig, mapsConfig, queryConfig, resultConfig } from '../shared/config.js';
+import { conversationErrors, conversationStatus } from '../shared/conversation.js';
+import type { MapContext } from '../shared/mapSpec.js';
+import { mapsErrors, mapsStatus } from '../shared/maps.js';
+import type { PersistedMapState } from '../shared/persistedMap.js';
+import { stripMapState } from '../shared/mapState.js';
+import { clientToolRequestSchema, interruptName, type ClientToolRequest, type ToolName } from '../shared/toolProtocol.js';
+import { datasetFileName, datasetFileNames, datasetIds, uploadableFiles, uploadContentType, uploadErrors, uploadStatus } from '../shared/datasets.js';
+import { millisecondsPerSecond, signedUrlTtlMs } from '../shared/signed-url.js';
+import {
+  allSeedEnvNames,
+  devServerPort,
+  missingCredentialsMessage,
+  readSeedCredentials,
+  seedEnvFile,
+  type SeedRole,
+} from '../scripts/seed/seed-env.js';
 
 // npm is npm.cmd on Windows, which spawn won't resolve without a shell.
 const isWin = process.platform === 'win32';
+
+// The original `fetch`, kept for every request to a signed URL: the cookie jar below patches the global `fetch` for every
+// host, and a signed URL (S3 on a sandbox) must not receive the app's session cookie. This is also what `npm run data:upload` does.
+const plainFetch = globalThis.fetch;
 
 // Install cookie jar before importing the API client — Node's fetch doesn't
 // persist cookies between requests, which breaks authenticated API calls.
 installCookieJar();
 
 let server: ChildProcess | null = null;
-let api: typeof ApiType;
 let authApi: typeof AuthApiType;
+let api: typeof ApiClientType;
+// The model mode the test pins on a dev server it starts itself; an existing server may run either.
+const testLlmMode: LlmMode = 'canned';
+let startedServer = false;
 
-const serverPort = 3000;
-const readinessUrl = `http://localhost:${serverPort}/.blocks-sandbox/config.json`;
+const readinessUrl = `http://localhost:${devServerPort}/.blocks-sandbox/config.json`;
+const seedCredentials = readSeedCredentials();
+
+/** The dev server and vite do not need the seeded users' credentials; the agent runs on the canned model. */
+function serverEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of allSeedEnvNames) delete env[name];
+  env[llmModeEnvName] = testLlmMode;
+  return env;
+}
 
 // ─── Setup (don't touch) ─────────────────────────────────────────────────────
 
 test.before(async () => {
-  // Use existing dev server if running, otherwise start one
-  if (!await isServerRunning(serverPort)) {
+  // Use existing dev server if running (it cannot be seeded while running),
+  // otherwise seed first and then start one.
+  if (!await isServerRunning(devServerPort)) {
+    const seeded = spawnSync('npm', ['run', 'seed:users'], { cwd: process.cwd(), stdio: 'inherit', shell: isWin });
+    if (seeded.status !== 0) throw new Error('Seeding the test users failed; see the output above.');
+    startedServer = true;
     server = spawn('npm', ['run', 'dev:server'], {
       cwd: process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: !isWin,
       shell: isWin,
-      env: { ...process.env, NODE_OPTIONS: '' },
+      env: { ...serverEnv(), NODE_OPTIONS: '' },
     });
     server.unref();
     await setTimeout(2000);
   }
 
-  const mod = await import('aws-blocks');
-  api = mod.api;
-  authApi = mod.authApi;
-
-  // Wait for the Blocks server to be ready without depending on the sample API.
-  for (let i = 0; i < 30; i++) {
+  // Wait for the Blocks server to be ready without depending on any app API.
+  // The server regenerates `aws-blocks/client.js` before it listens, so the
+  // client must be imported only after this succeeds (not earlier: a stale file
+  // would be cached by the module loader).
+  let ready = false;
+  for (let i = 0; i < 30 && !ready; i++) {
     try {
-      const response = await fetch(readinessUrl);
-      if (response.ok) return;
+      ready = (await fetch(readinessUrl)).ok;
     } catch {
       // The server is not listening yet.
     }
-    await setTimeout(1000);
+    if (!ready) await setTimeout(1000);
   }
-  throw new Error(`Server not ready at ${readinessUrl}`);
+  if (!ready) throw new Error(`Server not ready at ${readinessUrl}`);
+
+  const client = await import('aws-blocks');
+  authApi = client.authApi;
+  api = client.api;
 });
 
 test.after(() => {
   if (server?.pid) {
+    // Graceful stop first: killing only the process group leaves the frontend (vite) running on its port.
+    spawnSync('npm', ['run', 'dev:stop'], { cwd: process.cwd(), stdio: 'ignore', shell: isWin });
     try {
       if (isWin) spawnSync('taskkill', ['/pid', String(server.pid), '/T', '/F'], { stdio: 'ignore' });
       else process.kill(-server.pid, 'SIGTERM');
@@ -76,199 +129,1005 @@ test.after(() => {
   }
 });
 
-// ─── App readiness (independent of the sample API) ────────────────────────────
+// ─── App readiness ────────────────────────────────────────────────────────────
 
 test('app: server serves its Blocks config', async () => {
   const response = await fetch(readinessUrl);
   assert.ok(response.ok, `expected ${readinessUrl} to respond ok`);
 });
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
+// ─── Auth: sign-up is impossible ──────────────────────────────────────────────
 
-test('auth: starts signed out', async () => {
+test('app: the typed client exposes exactly the api and authApi namespaces', async () => {
+  const client = await import('aws-blocks');
+  // `generateClient` is the generated client's factory, not a namespace.
+  const namespaces = Object.keys(client).filter((name) => name !== 'generateClient').sort();
+  assert.deepStrictEqual(namespaces, ['api', 'authApi']);
+});
+
+test('auth: starts signed out and offers the sign-in action only', async () => {
   const state = await authApi.getAuthState();
   assert.strictEqual(state.state, 'signedOut');
+  assert.deepStrictEqual(state.actions.map((action) => action.name), ['signIn']);
 });
 
-test('auth: sign up creates account and signs in', async () => {
-  const state = await authApi.setAuthState({
-    action: 'signUp',
-    username: 'testuser@example.com',
-    password: 'TestPass123!',
-  });
-  assert.strictEqual(state.state, 'signedIn');
-  assert.strictEqual(state.user?.username, 'testuser@example.com');
-});
-
-test('auth: unauthenticated access is rejected', async () => {
-  // Sign out first
-  await authApi.setAuthState({ action: 'signOut' });
-
-  await assert.rejects(
-    () => api.listTodos(),
-    (err: any) => err.message.includes('Authentication') || err.message.includes('Session') || err.message.includes('401'),
-  );
-
-  // Sign back in for remaining tests
-  await authApi.setAuthState({
-    action: 'signIn',
-    username: 'testuser@example.com',
-    password: 'TestPass123!',
-  });
-});
-
-// ─── CRUD ─────────────────────────────────────────────────────────────────────
-
-test('todos: create with priority', async () => {
-  const todo = await api.createTodo('Buy milk', 1);
-  assert.strictEqual(todo.title, 'Buy milk');
-  assert.strictEqual(todo.priority, 1);
-  assert.strictEqual(todo.completed, false);
-  assert.strictEqual(todo.version, 1);
-  assert.ok(todo.todoId);
-});
-
-test('todos: list (only own)', async () => {
-  const list = await api.listTodos();
-  assert.ok(list.length >= 1);
-  assert.ok(list.every(t => t.userId === 'testuser@example.com'));
-});
-
-test('todos: list sorted by priority (client-side sort)', async () => {
-  // Create todos with different priorities
-  await api.createTodo('Low priority task', 3);
-  await api.createTodo('High priority task', 1);
-
-  const sorted = await api.listTodos('priority');
-  assert.ok(sorted.length >= 2);
-  // Priority 1 (high) should come before priority 3 (low)
-  const priorities = sorted.map(t => t.priority);
-  for (let i = 1; i < priorities.length; i++) {
-    assert.ok(priorities[i] >= priorities[i - 1], 'Should be sorted by priority ascending');
-  }
-});
-
-test('todos: list sorted by title (client-side sort)', async () => {
-  const sorted = await api.listTodos('title');
-  assert.ok(sorted.length >= 2);
-  const titles = sorted.map(t => t.title);
-  for (let i = 1; i < titles.length; i++) {
-    assert.ok(titles[i] >= titles[i - 1], 'Should be sorted by title ascending');
-  }
-});
-
-test('todos: toggle completion', async () => {
-  const [todo] = await api.listTodos();
-  await api.toggleTodo(todo.todoId);
-
-  const updated = (await api.listTodos()).find(t => t.todoId === todo.todoId);
-  assert.strictEqual(updated?.completed, !todo.completed);
-  assert.strictEqual(updated?.version, todo.version + 1);
-});
-
-test('todos: delete', async () => {
-  const before = await api.listTodos();
-  const target = before[0];
-  await api.deleteTodo(target.todoId);
-
-  const after = await api.listTodos();
-  assert.ok(!after.some(t => t.todoId === target.todoId));
-});
-
-// ─── Conditional writes (optimistic locking) ──────────────────────────────────
-
-test('todos: concurrent toggle → conflict → retry succeeds', async () => {
-  // Create a fresh todo
-  const todo = await api.createTodo('Conflict test');
-
-  // Simulate a concurrent write by toggling twice "simultaneously"
-  // First toggle succeeds (version 1 → 2)
-  await api.toggleTodo(todo.todoId);
-
-  // Read current state
-  const current = (await api.listTodos()).find(t => t.todoId === todo.todoId);
-  assert.strictEqual(current?.version, 2);
-
-  // Toggle again — should succeed because we're reading fresh version
-  await api.toggleTodo(todo.todoId);
-  const final = (await api.listTodos()).find(t => t.todoId === todo.todoId);
-  assert.strictEqual(final?.version, 3);
-  assert.strictEqual(final?.completed, todo.completed); // toggled twice = back to original
-
-  // Cleanup
-  await api.deleteTodo(todo.todoId);
-});
-
-// ─── Realtime ─────────────────────────────────────────────────────────────────
-// `subscribeTodos()` returns a channel the client hydrates into a live
-// WebSocket subscription (dev server runs a local WS server — no AWS). We
-// subscribe, mutate over the API, and assert the broadcast arrives.
-
-/**
- * Subscribe to `channel` and return a promise for the NEXT message, plus an
- * `established` promise that resolves once the server confirms the subscription.
- * Awaiting `established` before triggering a mutation closes the race where a
- * publish could fire before the subscribe is confirmed. Rejects after
- * `timeoutMs` so a dropped broadcast fails loudly instead of hanging.
- */
-function nextMessage<T>(
-  channel: {
-    subscribe(handler: (message: T) => void): { unsubscribe(): void; established: Promise<void> };
-  },
-  timeoutMs = 5000,
-): { received: Promise<T>; established: Promise<void>; unsubscribe(): void } {
-  let unsubscribe = () => {};
-  let established: Promise<void> = Promise.resolve();
-  const received = new Promise<T>((resolve, reject) => {
-    // Use globalThis to avoid the timers/promises setTimeout shadow (the
-    // template imports { setTimeout } from 'node:timers/promises' at the top).
-    const timer = globalThis.setTimeout(() => reject(new Error('timed out waiting for Realtime message')), timeoutMs);
-    const sub = channel.subscribe((message: T) => {
-      globalThis.clearTimeout(timer);
-      resolve(message);
-    });
-    established = sub.established;
-    unsubscribe = () => { globalThis.clearTimeout(timer); sub.unsubscribe(); };
-  });
-  return { received, established, unsubscribe };
+/** Asserts that a rejected action left the caller signed out and created nothing. */
+async function assertRejectedAndNoAccount(
+  result: Awaited<ReturnType<typeof authApi.setAuthState>>,
+  username: string,
+  password: string,
+): Promise<void> {
+  assert.strictEqual(result.state, 'signedOut');
+  assert.ok(result.error, 'expected an error message');
+  assert.deepStrictEqual(result.actions.map((action) => action.name), ['signIn']);
+  assert.strictEqual((await authApi.getAuthState()).state, 'signedOut');
+  // No account exists: the same credentials cannot sign in.
+  const signIn = await authApi.setAuthState({ action: 'signIn', username, password });
+  assert.strictEqual(signIn.state, 'signedOut');
+  assert.ok(signIn.error, 'expected the sign-in with the same credentials to fail');
 }
 
-test('realtime: a created todo broadcasts to a subscriber', async (t) => {
-  const channel = await api.subscribeTodos();
-  if (typeof channel.subscribe !== 'function') {
-    t.skip('Realtime middleware not hydrated (no local WS server — expected on Windows)');
-    return;
-  }
-  const { received, established, unsubscribe } = nextMessage<{ action: string; todoId: string }>(channel);
+// A fresh user name per run keeps these tests valid on every run.
+const probe = () => ({ username: `probe-${randomUUID()}`, password: `Pw-${randomUUID()}` });
+
+test('auth: a hand-made sign-up is rejected and creates no account', async () => {
+  const { username, password } = probe();
+  const result = await authApi.setAuthState({ action: 'signUp', username, password });
+  await assertRejectedAndNoAccount(result, username, password);
+});
+
+test('auth: a hand-made sign-up confirmation is rejected and creates no account', async () => {
+  const { username, password } = probe();
+  const result = await authApi.setAuthState({ action: 'confirmSignUp', username, code: '123456', password });
+  await assertRejectedAndNoAccount(result, username, password);
+});
+
+test('auth: a hand-made password reset is rejected and creates no account', async () => {
+  const { username, password } = probe();
+  const request = await authApi.setAuthState({ action: 'resetPassword', username });
+  await assertRejectedAndNoAccount(request, username, password);
+  const confirm = await authApi.setAuthState({
+    action: 'confirmResetPassword',
+    username,
+    code: '123456',
+    newPassword: password,
+  });
+  await assertRejectedAndNoAccount(confirm, username, password);
+});
+
+test('auth: an unknown action is rejected', async () => {
+  const { username, password } = probe();
+  // @ts-expect-error — deliberately outside the typed action union
+  const result = await authApi.setAuthState({ action: 'createAdmin', username, password });
+  await assertRejectedAndNoAccount(result, username, password);
+});
+
+// ─── Auth: the seeded user ────────────────────────────────────────────────────
+
+function credentialsOf(role: SeedRole): { username: string; password: string } {
+  assert.ok('credentials' in seedCredentials, 'missing' in seedCredentials ? missingCredentialsMessage(seedCredentials.missing) : '');
+  return seedCredentials.credentials[role];
+}
+
+const seedHint =
+  'The user may not exist yet or has another password: stop the dev server (npm run dev:stop), ' +
+  'run `npm run seed:users`, then run the tests again.';
+
+/** Signs in as a seeded user; fails with what to do when the running server does not know the user. */
+async function signInAs(role: SeedRole): Promise<{ username: string }> {
+  const { username, password } = credentialsOf(role);
+  const state = await authApi.setAuthState({ action: 'signIn', username, password });
+  assert.strictEqual(state.state, 'signedIn', `Could not sign in as the ${role} user from ${seedEnvFile} (${state.error ?? 'no error'}). ${seedHint}`);
+  return { username };
+}
+
+test('auth: the seeded user signs in and out', async () => {
+  const { username, password } = credentialsOf('admin');
+
+  const wrong = await authApi.setAuthState({ action: 'signIn', username, password: `${password}-wrong` });
+  assert.strictEqual(wrong.state, 'signedOut');
+  assert.ok(wrong.error, 'expected a wrong password to be rejected');
+
+  const signedIn = await authApi.setAuthState({ action: 'signIn', username, password });
+  assert.strictEqual(
+    signedIn.state,
+    'signedIn',
+    `Could not sign in as the admin user from ${seedEnvFile} (${signedIn.error ?? 'no error'}). ${seedHint}`,
+  );
+  assert.strictEqual(signedIn.user?.username, username);
+  assert.deepStrictEqual(signedIn.actions.map((action) => action.name), ['signOut']);
+
+  const current = await authApi.getAuthState();
+  assert.strictEqual(current.state, 'signedIn');
+  assert.strictEqual(current.user?.username, username);
+
+  const signedOut = await authApi.setAuthState({ action: 'signOut' });
+  assert.strictEqual(signedOut.state, 'signedOut');
+  assert.strictEqual((await authApi.getAuthState()).state, 'signedOut');
+});
+
+test('auth: a rejected action while signed in keeps the session and reports it', async () => {
+  const seeded = credentialsOf('admin');
+  const { username, password } = probe();
+
+  const signedIn = await authApi.setAuthState({ action: 'signIn', ...seeded });
+  assert.strictEqual(signedIn.state, 'signedIn');
   try {
-    await established;
-    const todo = await api.createTodo('Realtime create');
-    const message = await received;
-    assert.strictEqual(message.action, 'created');
-    assert.strictEqual(message.todoId, todo.todoId);
-    await api.deleteTodo(todo.todoId);
+    const signUp = await authApi.setAuthState({ action: 'signUp', username, password });
+    // @ts-expect-error — deliberately outside the typed action union
+    const unknownAction = await authApi.setAuthState({ action: 'createAdmin', username, password });
+    for (const result of [signUp, unknownAction]) {
+      assert.ok(result.error, 'expected an error message');
+      assert.strictEqual(result.state, 'signedIn');
+      assert.strictEqual(result.user?.username, seeded.username);
+    }
+    const current = await authApi.getAuthState();
+    assert.strictEqual(current.state, 'signedIn');
+    assert.strictEqual(current.user?.username, seeded.username);
   } finally {
-    unsubscribe();
+    await authApi.setAuthState({ action: 'signOut' });
+  }
+  const afterSignOut = await authApi.setAuthState({ action: 'signIn', username, password });
+  assert.strictEqual(afterSignOut.state, 'signedOut');
+  assert.ok(afterSignOut.error, 'expected the rejected sign-up to have created no account');
+});
+
+// ─── Access: every `api` method ───────────────────────────────────────────────
+
+// The typed client is a Proxy with only a `get` trap, so its methods cannot be listed at run time.
+// This table holds the arguments of one call per method of `api`: a method added without an entry
+// fails `npm run typecheck`, and the loops below call `api[name]` by key, so an entry cannot call
+// another method. The tests below call each method signed out and as the denied user.
+type ApiMethodName = keyof typeof ApiClientType;
+const sampleMapContext: MapContext = { view: { center: [139.7, 35.7], zoom: 9 }, layers: [] };
+// A well-formed conversation id nobody owns: the refusals of the two tests below then come from the access check, not from validation.
+const unownedConversationId = randomUUID();
+/** A SQL the guard accepts, `length` characters long. */
+const sqlOfLength = (length: number): string => `SELECT '${'x'.repeat(length - 'SELECT '.length - 2)}'`;
+const sampleLayer = (n: number, sql = 'SELECT * FROM schools'): PersistedMapState['layers'][number] => ({
+  id: `L${n}`,
+  name: `Layer ${n}`,
+  sql,
+  style: { type: 'single', color: '#1f78b4' },
+  label: null,
+  visible: true,
+});
+const sampleMapState: PersistedMapState = {
+  version: 1,
+  view: { center: [139.7, 35.7], zoom: 9 },
+  layers: [
+    sampleLayer(1),
+    { ...sampleLayer(2, "SELECT * FROM schools WHERE kind = 'university'"), style: { type: 'categorized', column: 'kind' }, label: { column: 'name', size: 12 }, visible: false },
+  ],
+  nextLayerSeq: 3,
+};
+const apiArguments: { [K in ApiMethodName]: Parameters<(typeof ApiClientType)[K]> } = {
+  getAppInfo: [],
+  getDatasetSources: [],
+  // A valid, uploadable name: the refusals of the two tests below then come from the access check, not from validation.
+  createDatasetUpload: [uploadableFiles[0]],
+  // Valid arguments for a map nobody owns: the refusals of the two tests below then come from the access check, not from validation.
+  saveMap: [{ title: 'Access check', state: sampleMapState }],
+  listMaps: [],
+  getMap: [randomUUID()],
+  deleteMap: [randomUUID()],
+  agentCreateConversationId: [],
+  agentGetChannel: [unownedConversationId],
+  agentStream: ['runQuery', unownedConversationId, sampleMapContext],
+  agentResume: [unownedConversationId, [{ interruptId: 'x', response: '{}' }]],
+  agentGetConversation: [unownedConversationId],
+  agentGetPendingInterrupts: [unownedConversationId],
+};
+// What `requireAuth` throws for a caller without a session (the block's own status).
+const unauthenticatedStatus = 401;
+const apiMethodNames = Object.keys(apiArguments);
+function isApiMethodName(name: string): name is ApiMethodName {
+  return name in apiArguments;
+}
+async function callApi<K extends ApiMethodName>(name: K): Promise<void> {
+  await api[name](...apiArguments[name]);
+}
+const apiCalls = apiMethodNames.filter(isApiMethodName);
+
+const deniedHint =
+  ` (the name in the denied-user variable may already be on a local list: stop the dev server, choose another name for the denied user, run \`npm run seed:users\`)`;
+
+/** Runs a call that must be refused and returns the error. */
+async function refusal(call: () => Promise<void>, what: string, hint = ''): Promise<ApiError> {
+  try {
+    await call();
+  } catch (error) {
+    assert.ok(error instanceof ApiError, `${what}: expected an ApiError`);
+    return error;
+  }
+  return assert.fail(`${what}: expected the call to be refused, but it succeeded${hint}`);
+}
+
+test('access: a signed-out caller is refused by every api method', async () => {
+  await authApi.setAuthState({ action: 'signOut' });
+  assert.ok(apiMethodNames.length > 0);
+  for (const method of apiCalls) {
+    const error = await refusal(() => callApi(method), `signed out, api.${method}`);
+    assert.strictEqual(error.status, unauthenticatedStatus, `api.${method}: expected ${unauthenticatedStatus}`);
+    assert.strictEqual(error.name, AuthBasicErrors.SessionExpired, `api.${method}: expected the session error of requireAuth`);
   }
 });
 
-test('realtime: an updated todo broadcasts an updated event', async (t) => {
-  const todo = await api.createTodo('Realtime update');
-  const channel = await api.subscribeTodos();
-  if (typeof channel.subscribe !== 'function') {
-    t.skip('Realtime middleware not hydrated (no local WS server — expected on Windows)');
-    await api.deleteTodo(todo.todoId);
-    return;
-  }
-  const { received, established, unsubscribe } = nextMessage<{ action: string; todoId: string }>(channel);
+test('access: a signed-in user who is not on the allowed list is refused by every api method', async () => {
+  const { username } = await signInAs('denied');
   try {
-    await established;
-    await api.toggleTodo(todo.todoId);
-    const message = await received;
-    assert.strictEqual(message.action, 'updated');
-    assert.strictEqual(message.todoId, todo.todoId);
+    for (const method of apiCalls) {
+      const error = await refusal(() => callApi(method), `denied user, api.${method}`, deniedHint);
+      assert.strictEqual(error.status, accessStatus.forbidden, `api.${method}: expected 403`);
+      assert.strictEqual(error.name, accessErrors.NotAllowed, `api.${method}: expected the not-allowed error`);
+    }
+    const state = await authApi.getAuthState();
+    assert.strictEqual(state.state, 'signedIn', 'a refusal must not sign the user out');
+    assert.strictEqual(state.user?.username, username);
   } finally {
-    unsubscribe();
-    await api.deleteTodo(todo.todoId);
+    await authApi.setAuthState({ action: 'signOut' });
   }
+});
+
+/** getAppInfo as a seeded user; a refusal says what to do when the running server has no lists. */
+async function appInfoAs(role: SeedRole): Promise<Awaited<ReturnType<typeof api.getAppInfo>>> {
+  await signInAs(role);
+  try {
+    return await api.getAppInfo();
+  } catch (error) {
+    if (error instanceof ApiError && error.name === accessErrors.NotAllowed) {
+      assert.fail(
+        `The ${role} user is not on the allowed list of the running dev server. ` +
+          'Stop the dev server (npm run dev:stop), run `npm run seed:users`, then run the tests again.',
+      );
+    }
+    throw error;
+  } finally {
+    await authApi.setAuthState({ action: 'signOut' });
+  }
+}
+
+for (const role of ['allowed', 'admin'] as const) {
+  test(`access: the ${role} user gets a valid getAppInfo answer`, async () => {
+    const info = await appInfoAs(role);
+    assert.ok(llmModes.some((mode) => mode === info.llmMode), `unexpected llmMode: ${info.llmMode}`);
+    // A server this run started has AGENT_LOCAL_MODEL=canned; a server that was already running may use either.
+    if (startedServer) assert.strictEqual(info.llmMode, testLlmMode);
+  });
+}
+
+// ─── Datasets: signed URLs ────────────────────────────────────────────────────
+
+/** Runs `body` signed in as the role and always signs out afterwards. */
+async function asRole<T>(role: SeedRole, body: () => Promise<T>): Promise<T> {
+  await signInAs(role);
+  try {
+    return await body();
+  } finally {
+    await authApi.setAuthState({ action: 'signOut' });
+  }
+}
+
+test('datasets: an allowed user gets signed download URLs for every dataset and the wasm file', async () => {
+  const before = Date.now();
+  const sources = await asRole('allowed', () => api.getDatasetSources());
+  const after = Date.now();
+
+  assert.deepStrictEqual(sources.sources.map((source) => source.id), datasetIds);
+  const urls = [...sources.sources.map((source) => source.url), sources.wasmUrl];
+  for (const url of urls) {
+    assert.ok(url.length > 0, 'expected a non-empty URL');
+    assert.doesNotThrow(() => new URL(url), 'expected a URL that parses');
+  }
+  assert.strictEqual(new Set(urls).size, urls.length, 'expected every URL to be different');
+
+  // The server cuts the time down to the whole second (under one second lost) and signs after `before`, so
+  // the expiry is within one second below `before + TTL` and never above `after + TTL`.
+  assert.ok(sources.expiresAt >= before + signedUrlTtlMs - millisecondsPerSecond, 'expiresAt is earlier than now plus the TTL minus a second');
+  assert.ok(sources.expiresAt <= after + signedUrlTtlMs, 'expiresAt is later than now plus the TTL');
+});
+
+// ─── Datasets: upload URLs are for admins ─────────────────────────────────────
+
+test('datasets: an allowed user who is not an admin is refused an upload URL, valid name or not', async () => {
+  const names = [uploadableFiles[0], 'unknown.parquet', '../municipalities.parquet', ''];
+  await asRole('allowed', async () => {
+    for (const name of names) {
+      const error = await refusal(async () => { await api.createDatasetUpload(name); }, `allowed user, createDatasetUpload(${JSON.stringify(name)})`);
+      assert.strictEqual(error.status, accessStatus.forbidden);
+      assert.strictEqual(error.name, accessErrors.AdminRequired);
+    }
+  });
+});
+
+test('datasets: an admin is refused an upload URL for a name that may not be uploaded', async () => {
+  const [first] = uploadableFiles;
+  const names = [
+    'unknown.parquet',
+    `../${first}`,
+    `a/${first}`,
+    first.toUpperCase(),
+    ` ${first}`,
+    '',
+    'a'.repeat(10_000),
+  ];
+  await asRole('admin', async () => {
+    for (const name of names) {
+      const error = await refusal(async () => { await api.createDatasetUpload(name); }, `admin, createDatasetUpload(a name of ${name.length} characters)`);
+      assert.strictEqual(error.status, uploadStatus.badRequest);
+      assert.strictEqual(error.name, uploadErrors.InvalidFile);
+      assert.ok(name === '' || !error.message.includes(name), 'the message must not echo the input');
+    }
+  });
+});
+
+test('datasets: an admin gets an upload URL for each uploadable file and uploads nothing', async () => {
+  await asRole('admin', async () => {
+    for (const name of uploadableFiles) {
+      const { url } = await api.createDatasetUpload(name);
+      assert.ok(url.length > 0, `expected a URL for ${name}`);
+      assert.doesNotThrow(() => new URL(url), `expected a URL that parses for ${name}`);
+    }
+  });
+});
+
+// ─── Datasets: the round trip of an upload ────────────────────────────────────
+//
+// `createDatasetUpload` accepts only the real file names, so these tests use one of them (the first dataset file).
+// They need no data files: the fixture is random bytes. The object is put back as it was found; when there was none,
+// the API has no delete, so the fixture stays and the test says so (`npm run data:upload` replaces it).
+
+const roundTripFile = datasetFileNames[0];
+const fixtureSizeBytes = 2_048;
+// What the local mock answers for an object that does not exist (read from the block's file server: a GET with a
+// valid token for a key without content). Any other failed download fails the test.
+const absentStatus = 404;
+const absentErrorCode = 'NoSuchKey';
+const absentBodySchema = z.object({ error: z.string() });
+/** What the mock answers for a PUT whose Content-Type is not the one signed into the URL. */
+const wrongContentTypeStatus = 403;
+const otherContentType = 'text/plain';
+
+type StoredObject = { bytes: Buffer<ArrayBuffer>; contentType: string | null };
+
+function requiredContentType(name: string): string {
+  const contentType = uploadContentType(name);
+  assert.ok(contentType !== undefined, `expected a content type for ${name}`);
+  return contentType;
+}
+
+/** The current object of `name`, read through a signed download URL of an allowed user; undefined when it is absent. */
+async function readObject(name: string): Promise<StoredObject | undefined> {
+  const sources = await asRole('allowed', () => api.getDatasetSources());
+  const found = sources.sources.find((source) => datasetFileName(source.id) === name);
+  assert.ok(found !== undefined, `expected a download URL for ${name}`);
+  const response = await plainFetch(found.url);
+  if (response.ok) return { bytes: Buffer.from(await response.arrayBuffer()), contentType: response.headers.get('content-type') };
+  const body = absentBodySchema.safeParse(await response.json().catch(() => undefined));
+  const isAbsent = response.status === absentStatus && body.success && body.data.error === absentErrorCode;
+  assert.ok(isAbsent, `downloading ${name}: HTTP ${response.status} is not the answer for an absent object`);
+  return undefined;
+}
+
+/** The admin's upload URL for `name`, used for one PUT. The URL is never put in a message. */
+async function putObject(name: string, contentType: string | undefined, bytes: Uint8Array<ArrayBuffer>): Promise<Response> {
+  const { url } = await asRole('admin', () => api.createDatasetUpload(name));
+  return plainFetch(url, { method: 'PUT', headers: contentType === undefined ? {} : { 'Content-Type': contentType }, body: bytes });
+}
+
+function assertSameObject(actual: StoredObject | undefined, expected: StoredObject | undefined, what: string): void {
+  if (expected === undefined) return assert.strictEqual(actual, undefined, `${what}: expected the object to be absent`);
+  assert.ok(actual !== undefined, `${what}: expected the object to be there`);
+  assert.ok(actual.bytes.equals(expected.bytes), `${what}: the bytes differ`);
+  assert.strictEqual(actual.contentType, expected.contentType, `${what}: the content type differs`);
+}
+
+/** Puts the original object back and checks it; returns what went wrong, or undefined. Notes it when there was no original. */
+async function restoreOriginal(original: StoredObject | undefined): Promise<string | undefined> {
+  if (original === undefined) {
+    console.log(`Note: ${roundTripFile} was absent in the local bucket and now holds the test's random bytes (the API has no delete). Run \`npm run data:upload\` to put the real file there.`);
+    return undefined;
+  }
+  try {
+    const restored = await putObject(roundTripFile, requiredContentType(roundTripFile), original.bytes);
+    assert.ok(restored.ok, `putting the original back: the PUT answered HTTP ${restored.status}`);
+    assertSameObject(await readObject(roundTripFile), original, 'after putting the original back');
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'putting the original back failed';
+  }
+}
+
+test('datasets: an uploaded object comes back with the same bytes and content type, and the original is put back', async () => {
+  const contentType = requiredContentType(roundTripFile);
+  const fixture = new Uint8Array(randomBytes(fixtureSizeBytes));
+  const original = await readObject(roundTripFile);
+  let bodyFailed = false;
+  try {
+    const put = await putObject(roundTripFile, contentType, fixture);
+    assert.ok(put.ok, `the PUT answered HTTP ${put.status}`);
+    assertSameObject(await readObject(roundTripFile), { bytes: Buffer.from(fixture), contentType }, 'after the upload');
+  } catch (error) {
+    bodyFailed = true;
+    throw error;
+  } finally {
+    const restoreFailure = await restoreOriginal(original);
+    if (restoreFailure !== undefined) {
+      // The first failure must stay the one that is reported: the restore failure is shown beside it, not instead of it.
+      if (!bodyFailed) assert.fail(restoreFailure);
+      console.error(`The test failed above, and putting the original back failed too: ${restoreFailure}`);
+    }
+  }
+});
+
+test('datasets: a PUT with another or no Content-Type is refused and leaves the object as it was', async () => {
+  assert.notStrictEqual(otherContentType, requiredContentType(roundTripFile));
+  const before = await readObject(roundTripFile);
+  const fixture = new Uint8Array(randomBytes(fixtureSizeBytes));
+  for (const contentType of [otherContentType, undefined]) {
+    const put = await putObject(roundTripFile, contentType, fixture);
+    assert.strictEqual(put.status, wrongContentTypeStatus, `a PUT with ${contentType === undefined ? 'no' : 'another'} Content-Type answered HTTP ${put.status}`);
+    assertSameObject(await readObject(roundTripFile), before, 'after the refused PUT');
+  }
+});
+
+// ─── Conversation API (canned model) ──────────────────────────────────────────
+
+// These tests need the canned model: with Bedrock the model would choose the tool itself.
+// A server this run did not start may run Bedrock; `startedServer` is only known once the setup has run.
+const cannedOnlyMessage = 'a server this run did not start may run Bedrock';
+
+const waitMs = 30_000;
+const pollMs = 100;
+
+type ChunkWatcher = {
+  chunks: AgentStreamChunk[];
+  /** Resolves with the first chunk (from the start) that satisfies `matches`; fails after `waitMs`. */
+  next(matches: (chunk: AgentStreamChunk) => boolean, what: string): Promise<AgentStreamChunk>;
+  stop(): void;
+};
+
+/** Subscribes to the conversation's channel as the browser does (the handle `agentGetChannel` returns) and waits until it is established. */
+async function watchChannel(conversationId: string): Promise<ChunkWatcher> {
+  const { channel } = await api.agentGetChannel(conversationId);
+  const chunks: AgentStreamChunk[] = [];
+  const subscription = channel.subscribe((chunk) => chunks.push(chunk));
+  await subscription.established;
+  return {
+    chunks,
+    async next(matches, what) {
+      const deadline = Date.now() + waitMs;
+      for (;;) {
+        const found = chunks.find(matches);
+        if (found) return found;
+        const failure = chunks.find((chunk) => chunk.type === 'error');
+        if (failure) assert.fail(`${what}: the turn failed (${failure.error})`);
+        if (Date.now() > deadline) assert.fail(`${what}: nothing arrived within ${waitMs} ms (got ${chunks.map((chunk) => chunk.type).join(', ') || 'no chunks'})`);
+        await setTimeout(pollMs);
+      }
+    },
+    stop: () => subscription.unsubscribe(),
+  };
+}
+
+// What the browser answers per tool (valid results of each tool).
+const validAnswers: Record<ToolName, string> = {
+  runQuery: JSON.stringify({ ok: true, data: { columns: [{ name: 'n', type: 'number' }], rows: [{ n: 1 }], rowCount: 1, truncated: false } }),
+  addLayer: JSON.stringify({
+    ok: true,
+    data: {
+      layerId: 'L1',
+      name: '駅',
+      featureCount: 1,
+      geometryType: 'point',
+      columns: [{ name: 'station_name', type: 'string' }],
+      bbox: [139, 35, 140, 36],
+      applied: { type: 'single', color: '#e41a1c' },
+    },
+  }),
+  setLayerStyle: JSON.stringify({ ok: true, data: { layerId: 'L1', applied: { type: 'single', color: '#e41a1c' } } }),
+  setLayerLabel: JSON.stringify({ ok: true, data: { layerId: 'L1', label: null } }),
+  removeLayer: JSON.stringify({ ok: true, data: { removed: 'L1', remaining: [] } }),
+  setView: JSON.stringify({ ok: true, data: { center: [139.7, 35.7], zoom: 9 } }),
+};
+
+type Interrupts = NonNullable<AgentStreamChunk['interrupts']>;
+
+/**
+ * The canned model calls a tool when its name, or one of the words of its name, appears in the message. The message
+ * carries `<map_state>` with a `view` key, so it also calls `setView`: the interrupts arrive in one chunk and are
+ * answered together, as the browser does. The first message calls `runQuery`, the second `addLayer`.
+ */
+const cannedMessage = 'runQuery を実行して';
+const cannedLayerMessage = 'addLayer を実行して';
+
+async function nextInterrupts(watcher: ChunkWatcher): Promise<Interrupts> {
+  const chunk = await watcher.next((candidate) => candidate.type === 'interrupt', 'waiting for the interrupt');
+  const interrupts = chunk.interrupts ?? [];
+  assert.ok(interrupts.length > 0, 'expected at least one interrupt');
+  return interrupts;
+}
+
+/** The interrupt's reason is the request the browser executes: it must parse as a `ClientToolRequest` (4.4 relies on it). */
+function requestOf(interrupt: Interrupts[number]): ClientToolRequest {
+  return clientToolRequestSchema.parse(interrupt.reason);
+}
+
+const answersTo = (interrupts: Interrupts): { interruptId: string; response: string }[] =>
+  interrupts.map((interrupt) => ({ interruptId: interrupt.id, response: validAnswers[requestOf(interrupt).tool] }));
+
+/** The tool-result rows of a conversation as `{ toolName, output }`. */
+async function toolResults(conversationId: string): Promise<{ toolName: string; output: string }[]> {
+  const { messages } = await api.agentGetConversation(conversationId);
+  return messages
+    .filter((message) => message.role === 'tool-result')
+    .map((message) => ({ toolName: String(message.metadata.toolName), output: JSON.stringify(message.metadata.toolOutput) }));
+}
+
+const untrustedMarker = '<untrusted-data';
+
+test('agent: a full round trip through the canned model: tool calls, interrupts, resume, done', async (t) => {
+  if (!startedServer) return t.skip(cannedOnlyMessage);
+  await asRole('allowed', async () => {
+    const { conversationId } = await api.agentCreateConversationId();
+    assert.match(conversationId, /^[0-9a-f-]{36}$/);
+    const watcher = await watchChannel(conversationId);
+    try {
+      const { channelId } = await api.agentStream(cannedMessage, conversationId, sampleMapContext);
+      assert.strictEqual(channelId, conversationId, 'the channel is named after the conversation');
+
+      const interrupts = await nextInterrupts(watcher);
+      const tools = interrupts.map((interrupt) => requestOf(interrupt).tool);
+      assert.ok(tools.includes('runQuery'), `expected a runQuery interrupt (got ${tools.join(', ')})`);
+      for (const interrupt of interrupts) assert.ok(interrupt.name.startsWith(interruptName(requestOf(interrupt).tool)));
+
+      const pending = await api.agentGetPendingInterrupts(conversationId);
+      assert.deepStrictEqual(pending.interrupts.map(({ id }) => id).sort(), interrupts.map(({ id }) => id).sort());
+
+      await api.agentResume(conversationId, answersTo(interrupts));
+      const done = await watcher.next((chunk) => chunk.type === 'done', 'waiting for done');
+      assert.ok(done.text, 'expected a final text');
+    } finally {
+      watcher.stop();
+    }
+
+    assert.deepStrictEqual((await api.agentGetPendingInterrupts(conversationId)).interrupts, []);
+    const { messages } = await api.agentGetConversation(conversationId);
+    const user = messages.find((message) => message.role === 'user');
+    assert.ok(user, 'expected the user message in the history');
+    assert.ok(user.content.includes('<map_state>'), 'the map context travels with the message');
+    assert.strictEqual(stripMapState(user.content), cannedMessage);
+    assert.ok(messages.some((message) => message.role === 'assistant'));
+
+    // A second turn on the same conversation calls addLayer.
+    const second = await watchChannel(conversationId);
+    try {
+      await api.agentStream(cannedLayerMessage, conversationId, sampleMapContext);
+      const layerInterrupts = await nextInterrupts(second);
+      assert.ok(layerInterrupts.some((interrupt) => requestOf(interrupt).tool === 'addLayer'), 'expected an addLayer interrupt');
+      await api.agentResume(conversationId, answersTo(layerInterrupts));
+      await second.next((chunk) => chunk.type === 'done', 'waiting for done of the second turn');
+    } finally {
+      second.stop();
+    }
+
+    // The tools that carry dataset values reach the model wrapped as untrusted data; the others are not.
+    const results = await toolResults(conversationId);
+    const untrusted = new Set(['runQuery', 'addLayer', 'setLayerStyle']);
+    for (const toolName of ['runQuery', 'addLayer', 'setView']) assert.ok(results.some((result) => result.toolName === toolName), `expected a ${toolName} result`);
+    for (const { toolName, output } of results) {
+      assert.strictEqual(output.includes(untrustedMarker), untrusted.has(toolName), `${toolName}: untrusted wrapping`);
+    }
+    assert.ok(results.find((result) => result.toolName === 'runQuery')?.output.includes('rowCount'), 'the runQuery answer reached the model');
+  });
+});
+
+// The canned model calls a tool when a word of its name is in the message (the word "Style" for `setLayerStyle`, and so on).
+// `setView` comes with each of them through the map context's `view` key.
+for (const { tool, message } of [
+  { tool: 'setLayerStyle', message: 'Style を変えて' },
+  { tool: 'setLayerLabel', message: 'Label を変えて' },
+  { tool: 'removeLayer', message: 'remove して' }
+] as const) {
+  test(`agent: the canned ${tool} call reaches the browser as an interrupt that parses as a request, and its answer completes the turn`, async (t) => {
+    if (!startedServer) return t.skip(cannedOnlyMessage);
+    await asRole('allowed', async () => {
+      const { conversationId } = await api.agentCreateConversationId();
+      const watcher = await watchChannel(conversationId);
+      try {
+        await api.agentStream(message, conversationId, sampleMapContext);
+        const interrupts = await nextInterrupts(watcher);
+        const tools = interrupts.map((interrupt) => requestOf(interrupt).tool);
+        assert.ok(tools.includes(tool), `expected a ${tool} interrupt (got ${tools.join(', ')})`);
+        await api.agentResume(conversationId, answersTo(interrupts));
+        await watcher.next((chunk) => chunk.type === 'done', 'waiting for done');
+      } finally {
+        watcher.stop();
+      }
+      assert.ok((await toolResults(conversationId)).some((result) => result.toolName === tool), `expected a ${tool} result`);
+    });
+  });
+}
+
+test('agent: a forged, repeated or already answered interrupt id is a 409 that starts nothing', async (t) => {
+  if (!startedServer) return t.skip(cannedOnlyMessage);
+  await asRole('allowed', async () => {
+    const { conversationId } = await api.agentCreateConversationId();
+    const watcher = await watchChannel(conversationId);
+    try {
+      await api.agentStream(cannedMessage, conversationId, sampleMapContext);
+      const interrupts = await nextInterrupts(watcher);
+      const [first] = answersTo(interrupts);
+
+      const conflict = async (responses: typeof first[], what: string) => {
+        const error = await refusal(async () => { await api.agentResume(conversationId, responses); }, what);
+        assert.strictEqual(error.status, conversationStatus.conflict, `${what}: expected 409`);
+        assert.strictEqual(error.name, conversationErrors.InterruptNotPending);
+      };
+      await conflict([{ interruptId: 'forged', response: first.response }], 'a forged id');
+      await conflict([first, first], 'a repeated id');
+      await conflict([first, { interruptId: 'forged', response: first.response }], 'a forged id among real ones');
+      const stream = await refusal(async () => { await api.agentStream('もう一度', conversationId, sampleMapContext); }, 'a message while interrupts are pending');
+      assert.strictEqual(stream.status, conversationStatus.conflict);
+      assert.strictEqual(stream.name, conversationErrors.InterruptsPending);
+
+      // The refusals left the paused turn as it was: the pending interrupts are still there and a correct answer completes it.
+      const stillPending = await api.agentGetPendingInterrupts(conversationId);
+      assert.deepStrictEqual(stillPending.interrupts.map(({ id }) => id).sort(), interrupts.map(({ id }) => id).sort());
+      await api.agentResume(conversationId, answersTo(interrupts));
+      await watcher.next((chunk) => chunk.type === 'done', 'waiting for done');
+
+      // After done, the same answers again are refused and no model turn starts.
+      const before = (await api.agentGetConversation(conversationId)).messages.length;
+      await conflict(answersTo(interrupts), 'a replay after done');
+      assert.strictEqual((await api.agentGetConversation(conversationId)).messages.length, before, 'a refused replay adds nothing');
+      assert.deepStrictEqual((await api.agentGetPendingInterrupts(conversationId)).interrupts, []);
+    } finally {
+      watcher.stop();
+    }
+  });
+});
+
+test('agent: an answer that is not a valid result still completes the turn (a tool error for the model, no crash)', async (t) => {
+  if (!startedServer) return t.skip(cannedOnlyMessage);
+  await asRole('allowed', async () => {
+    const { conversationId } = await api.agentCreateConversationId();
+    const watcher = await watchChannel(conversationId);
+    try {
+      await api.agentStream(cannedMessage, conversationId, sampleMapContext);
+      const interrupts = await nextInterrupts(watcher);
+      await api.agentResume(conversationId, interrupts.map(({ id }) => ({ interruptId: id, response: 'not json' })));
+      await watcher.next((chunk) => chunk.type === 'done', 'waiting for done');
+    } finally {
+      watcher.stop();
+    }
+    assert.ok((await toolResults(conversationId)).some((result) => result.output.includes('ENGINE_UNAVAILABLE')), 'the model got a tool error');
+  });
+});
+
+// The SQL guard's short-circuit (a rejected SQL answers SQL_REJECTED without an interrupt) is tested in
+// `aws-blocks/agent-tools.test.ts`: the canned model gives each tool one fixed, valid input (`aws-blocks/agent-canned.ts`),
+// so a rejected SQL cannot be arranged through the running server.
+
+/** What the calls below answer (they are awaited for their refusal, and the answer is dropped). */
+type ApiResult = object | void;
+
+/** The calls of the conversation API for an id, each with arguments that would pass validation. */
+const conversationCalls: { [name: string]: (conversationId: string) => Promise<ApiResult> } = {
+  agentGetChannel: (id) => api.agentGetChannel(id),
+  agentStream: (id) => api.agentStream('runQuery', id, sampleMapContext),
+  agentResume: (id) => api.agentResume(id, [{ interruptId: 'x', response: '{}' }]),
+  agentGetConversation: (id) => api.agentGetConversation(id),
+  agentGetPendingInterrupts: (id) => api.agentGetPendingInterrupts(id),
+};
+
+test("agent: another user cannot subscribe to, stream to, resume, read or list the interrupts of someone else's conversation", async () => {
+  const conversationId = await asRole('allowed', async () => (await api.agentCreateConversationId()).conversationId);
+  await asRole('admin', async () => {
+    for (const [name, call] of Object.entries(conversationCalls)) {
+      const error = await refusal(async () => { await call(conversationId); }, `another user, api.${name}`);
+      assert.strictEqual(error.status, conversationStatus.notFound, `api.${name}: expected 404`);
+      assert.strictEqual(error.name, conversationErrors.NotFound, `api.${name}: expected the not-found error`);
+      assert.ok(!error.message.includes(conversationId), `api.${name}: the message must not echo the id`);
+    }
+    // The other user's own conversation list is not where the first one's conversation is.
+    const mine = (await api.agentCreateConversationId()).conversationId;
+    assert.notStrictEqual(mine, conversationId);
+  });
+  // The owner is unaffected by the refused attempts: nothing was started on the conversation.
+  await asRole('allowed', async () => {
+    assert.deepStrictEqual((await api.agentGetPendingInterrupts(conversationId)).interrupts, []);
+    assert.deepStrictEqual((await api.agentGetConversation(conversationId)).messages, []);
+  });
+});
+
+test('agent: a conversation that does not exist is a 404, the same as one that is not yours', async () => {
+  await asRole('allowed', async () => {
+    for (const [name, call] of Object.entries(conversationCalls)) {
+      const error = await refusal(async () => { await call(randomUUID()); }, `unknown conversation, api.${name}`);
+      assert.strictEqual(error.status, conversationStatus.notFound, `api.${name}: expected 404`);
+    }
+  });
+});
+
+test('agent: a missing or malformed conversation id is rejected with 400', async () => {
+  await asRole('allowed', async () => {
+    const ids = [undefined, null, '', 'L1', '../x', 'a'.repeat(10_000), `${randomUUID()}x`];
+    for (const [name, call] of Object.entries(conversationCalls)) {
+      for (const id of ids) {
+        // @ts-expect-error — deliberately outside the argument type
+        const error = await refusal(async () => { await call(id); }, `api.${name}(${JSON.stringify(id)?.slice(0, 20)})`);
+        assert.strictEqual(error.status, conversationStatus.badRequest, `api.${name}(${JSON.stringify(id)?.slice(0, 20)}): expected 400`);
+        assert.strictEqual(error.name, conversationErrors.InvalidRequest);
+      }
+    }
+  });
+});
+
+test('agent: arguments over their limits are rejected with 400 and start nothing', async () => {
+  await asRole('allowed', async () => {
+    const { conversationId } = await api.agentCreateConversationId();
+    const layers = Array.from({ length: mapConfig.summaryMaxBytes / 10 }, (_, n) => ({ id: `L${n}`, name: 'name' }));
+    const tooManyBytes = (size: number): string => 'a'.repeat(size);
+    const oversize: { what: string; call: () => Promise<ApiResult> }[] = [
+      { what: 'an empty message', call: () => api.agentStream('', conversationId, sampleMapContext) },
+      { what: 'a blank message', call: () => api.agentStream('  \n ', conversationId, sampleMapContext) },
+      { what: 'a message over the limit', call: () => api.agentStream('a'.repeat(agentConfig.maxUtteranceChars + 1), conversationId, sampleMapContext) },
+      { what: 'a map context over the byte limit', call: () => api.agentStream('駅', conversationId, { ...sampleMapContext, layers }) },
+      // @ts-expect-error — deliberately outside the type
+      { what: 'a map context of the wrong shape', call: () => api.agentStream('駅', conversationId, { view: 1, layers: [] }) },
+      { what: 'no responses', call: () => api.agentResume(conversationId, []) },
+      {
+        what: 'more responses than the limit',
+        call: () => api.agentResume(conversationId, Array.from({ length: agentConfig.maxInterruptResponses + 1 }, (_, n) => ({ interruptId: `id${n}`, response: '{}' }))),
+      },
+      { what: 'a response over the byte limit', call: () => api.agentResume(conversationId, [{ interruptId: 'x', response: tooManyBytes(resultConfig.maxToolResultBytes + 1) }]) },
+      {
+        what: 'responses over the total limit',
+        call: () =>
+          api.agentResume(
+            conversationId,
+            Array.from({ length: resultConfig.maxTotalResultBytes / resultConfig.maxToolResultBytes + 1 }, (_, n) => ({ interruptId: `id${n}`, response: tooManyBytes(resultConfig.maxToolResultBytes) })),
+          ),
+      },
+    ];
+    for (const { what, call } of oversize) {
+      const error = await refusal(async () => { await call(); }, what);
+      assert.strictEqual(error.status, conversationStatus.badRequest, `${what}: expected 400`);
+      assert.strictEqual(error.name, conversationErrors.InvalidRequest, `${what}: expected the invalid-request error`);
+    }
+    assert.deepStrictEqual((await api.agentGetConversation(conversationId)).messages, [], 'a refused call must start no turn');
+  });
+});
+
+// ─── Saved maps ───────────────────────────────────────────────────────────────
+//
+// Both users below are on the allowed list (the `allowed` user and the admin), so one is "someone else" for the other.
+// Every test removes the maps it made, also when it fails.
+
+/** Runs `body` as the role, then deletes the given maps (the ids are added by `body`). */
+async function withMaps<T>(role: SeedRole, body: (made: string[]) => Promise<T>): Promise<T> {
+  const made: string[] = [];
+  try {
+    return await asRole(role, () => body(made));
+  } finally {
+    await asRole(role, async () => {
+      for (const mapId of made) await api.deleteMap(mapId).catch(() => undefined);
+    });
+  }
+}
+
+async function saved(made: string[], title: string, extra: { conversationId?: string } = {}): Promise<{ mapId: string; updatedAt: number }> {
+  const result = await api.saveMap({ title, state: sampleMapState, ...extra });
+  made.push(result.mapId);
+  return result;
+}
+
+async function refusedWith(call: () => Promise<ApiResult>, what: string, status: number, name: string): Promise<ApiError> {
+  const error = await refusal(async () => { await call(); }, what);
+  assert.strictEqual(error.status, status, `${what}: expected ${status}`);
+  assert.strictEqual(error.name, name, `${what}: expected ${name}`);
+  return error;
+}
+
+test('maps: save, list, get (the same state), update, delete, then get is a 404', async () => {
+  await withMaps('allowed', async (made) => {
+    const before = Date.now();
+    const created = await saved(made, 'First title');
+    assert.ok(created.updatedAt >= before && created.updatedAt <= Date.now(), 'updatedAt is the time of the save');
+    assert.ok(z.uuid().safeParse(created.mapId).success, 'the id is issued by the server');
+
+    const listed = (await api.listMaps()).maps;
+    assert.deepStrictEqual(listed.find((map) => map.mapId === created.mapId), { mapId: created.mapId, title: 'First title', updatedAt: created.updatedAt });
+    assert.ok(listed.every((map) => !('state' in map)), 'the list has no states');
+
+    assert.deepStrictEqual(await api.getMap(created.mapId), { mapId: created.mapId, title: 'First title', state: sampleMapState, updatedAt: created.updatedAt });
+
+    await setTimeout(5);
+    const changedState: PersistedMapState = { ...sampleMapState, layers: [sampleLayer(1)], nextLayerSeq: 2 };
+    const updated = await api.saveMap({ mapId: created.mapId, title: 'Second title', state: changedState, expectedUpdatedAt: created.updatedAt });
+    assert.strictEqual(updated.mapId, created.mapId);
+    assert.ok(updated.updatedAt > created.updatedAt);
+    assert.deepStrictEqual(await api.getMap(created.mapId), { mapId: created.mapId, title: 'Second title', state: changedState, updatedAt: updated.updatedAt });
+    assert.strictEqual((await api.listMaps()).maps.filter((map) => map.mapId === created.mapId).length, 1, 'an update does not add a map');
+
+    assert.deepStrictEqual(await api.deleteMap(created.mapId), { success: true });
+    await refusedWith(() => api.getMap(created.mapId), 'get after delete', mapsStatus.notFound, mapsErrors.NotFound);
+    await refusedWith(() => api.deleteMap(created.mapId), 'delete again', mapsStatus.notFound, mapsErrors.NotFound);
+    assert.ok((await api.listMaps()).maps.every((map) => map.mapId !== created.mapId));
+  });
+});
+
+test('maps: an update names the version it saw: a stale one is a 409 and the newer save stays; a version is needed for an update and refused for a new map', async () => {
+  await withMaps('allowed', async (made) => {
+    const v1 = await saved(made, 'v1');
+    await setTimeout(5);
+    const v2 = await api.saveMap({ mapId: v1.mapId, title: 'v2', state: sampleMapState, expectedUpdatedAt: v1.updatedAt });
+    assert.ok(v2.updatedAt > v1.updatedAt);
+    // A second page that still has v1 saves: refused, and v2 is what is stored.
+    await setTimeout(5);
+    const stale = { mapId: v1.mapId, title: 'stale v1', state: { ...sampleMapState, layers: [] }, expectedUpdatedAt: v1.updatedAt };
+    await refusedWith(() => api.saveMap(stale), 'an update with a stale version', mapsStatus.conflict, mapsErrors.Conflict);
+    assert.deepStrictEqual(await api.getMap(v1.mapId), { mapId: v1.mapId, title: 'v2', state: sampleMapState, updatedAt: v2.updatedAt });
+    // With the version of v2 it lands.
+    const v3 = await api.saveMap({ ...stale, expectedUpdatedAt: v2.updatedAt });
+    assert.strictEqual((await api.getMap(v1.mapId)).title, 'stale v1');
+    assert.ok(v3.updatedAt > v2.updatedAt);
+
+    // The type allows it (the check is the server's): an update without the version.
+    await refusedWith(() => api.saveMap({ mapId: v1.mapId, title: 'no version', state: sampleMapState }), 'an update without a version', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    await refusedWith(() => api.saveMap({ title: 'new with a version', state: sampleMapState, expectedUpdatedAt: 1 }), 'a new map with a version', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    await refusedWith(() => api.saveMap({ mapId: v1.mapId, title: 'bad version', state: sampleMapState, expectedUpdatedAt: -1 }), 'a negative version', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    assert.strictEqual((await api.getMap(v1.mapId)).title, 'stale v1', 'refused saves change nothing');
+  });
+});
+
+test('maps: the list is newest first and an update moves a map to the top', async () => {
+  await withMaps('allowed', async (made) => {
+    const first = await saved(made, 'one');
+    await setTimeout(5);
+    const second = await saved(made, 'two');
+    const ours = (maps: { mapId: string }[]) => maps.map(({ mapId }) => mapId).filter((mapId) => made.includes(mapId));
+    assert.deepStrictEqual(ours((await api.listMaps()).maps), [second.mapId, first.mapId]);
+    await setTimeout(5);
+    await api.saveMap({ mapId: first.mapId, title: 'one again', state: sampleMapState, expectedUpdatedAt: first.updatedAt });
+    assert.deepStrictEqual(ours((await api.listMaps()).maps), [first.mapId, second.mapId]);
+  });
+});
+
+test("maps: another user cannot get, update or delete a user's map, and does not see it in the list", async () => {
+  await withMaps('allowed', async (made) => {
+    const { mapId, updatedAt } = await saved(made, 'Private');
+    // `asRole` signs out when it ends, so the owner signs in again after it.
+    await asRole('admin', async () => {
+      assert.ok((await api.listMaps()).maps.every((map) => map.mapId !== mapId), "another user's list does not have the map");
+      const calls: Record<string, () => Promise<ApiResult>> = {
+        getMap: () => api.getMap(mapId),
+        'saveMap (update)': () => api.saveMap({ mapId, title: 'Taken over', state: sampleMapState, expectedUpdatedAt: updatedAt }),
+        deleteMap: () => api.deleteMap(mapId),
+      };
+      for (const [name, call] of Object.entries(calls)) {
+        const error = await refusedWith(call, `another user, ${name}`, mapsStatus.notFound, mapsErrors.NotFound);
+        assert.ok(!error.message.includes(mapId), `${name}: the message must not echo the id`);
+      }
+      // The same id saved as a new map is another user's own record, not the first one.
+      const own = await saved([], 'Mine');
+      assert.notStrictEqual(own.mapId, mapId);
+      await api.deleteMap(own.mapId);
+    });
+    // The owner's map is as it was.
+    await signInAs('allowed');
+    assert.deepStrictEqual(await api.getMap(mapId), { mapId, title: 'Private', state: sampleMapState, updatedAt });
+  });
+});
+
+test('maps: a user id in the input is ignored: the map is the signed-in user\'s', async () => {
+  const otherUser = credentialsOf('admin').username;
+  await withMaps('allowed', async (made) => {
+    // @ts-expect-error — deliberately outside the type
+    const { mapId } = await api.saveMap({ title: 'Mine', state: sampleMapState, userId: otherUser });
+    made.push(mapId);
+    assert.strictEqual((await api.getMap(mapId)).title, 'Mine', 'the owner reads it');
+    await asRole('admin', async () => {
+      assert.ok((await api.listMaps()).maps.every((map) => map.mapId !== mapId), 'the named user does not get it');
+      await refusedWith(() => api.getMap(mapId), 'the named user, getMap', mapsStatus.notFound, mapsErrors.NotFound);
+    });
+  });
+});
+
+test('maps: a map id that is not well formed is a 400, one that does not exist a 404', async () => {
+  await asRole('allowed', async () => {
+    for (const id of ['', 'L1', '../x', 'a'.repeat(10_000), `${randomUUID()}x`]) {
+      await refusedWith(() => api.getMap(id), `getMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+      await refusedWith(() => api.deleteMap(id), `deleteMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+      await refusedWith(() => api.saveMap({ mapId: id, title: 't', state: sampleMapState, expectedUpdatedAt: 1 }), `saveMap(${id.slice(0, 12)})`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    }
+    await refusedWith(() => api.getMap(randomUUID()), 'getMap of an unknown id', mapsStatus.notFound, mapsErrors.NotFound);
+    await refusedWith(() => api.saveMap({ mapId: randomUUID(), title: 't', state: sampleMapState, expectedUpdatedAt: 1 }), 'saveMap of an unknown id', mapsStatus.notFound, mapsErrors.NotFound);
+  });
+});
+
+test('maps: input over its limits is a 400 and saves nothing', async () => {
+  await withMaps('allowed', async (made) => {
+    const existing = await saved(made, 'Untouched');
+    const listBefore = (await api.listMaps()).maps;
+    const bigSql = sqlOfLength(queryConfig.maxSqlChars);
+    const bad: { what: string; input: Parameters<typeof api.saveMap>[0] }[] = [
+      { what: 'an empty title', input: { title: '', state: sampleMapState } },
+      { what: 'a blank title', input: { title: '  ', state: sampleMapState } },
+      { what: 'a title over the limit', input: { title: 'a'.repeat(mapsConfig.title.maxChars + 1), state: sampleMapState } },
+      { what: 'more layers than the limit', input: { title: 't', state: { ...sampleMapState, layers: Array.from({ length: mapsConfig.maxLayers + 1 }, (_, n) => sampleLayer(n)) } } },
+      { what: 'a SQL over the limit', input: { title: 't', state: { ...sampleMapState, layers: [sampleLayer(1, 'x'.repeat(queryConfig.maxSqlChars + 1))] } } },
+      { what: 'a state over the byte limit', input: { title: 't', state: { ...sampleMapState, layers: Array.from({ length: mapsConfig.maxLayers }, (_, n) => sampleLayer(n, bigSql)) } } },
+      { what: 'a layer whose SQL the guard rejects', input: { title: 't', state: { ...sampleMapState, layers: [sampleLayer(1), sampleLayer(2, 'DROP TABLE schools')] } } },
+      { what: 'a bad layer id', input: { title: 't', state: { ...sampleMapState, layers: [{ ...sampleLayer(1), id: 'layer-1' }] } } },
+      { what: 'a repeated layer id', input: { title: 't', state: { ...sampleMapState, layers: [sampleLayer(1), sampleLayer(1)] } } },
+      // @ts-expect-error — deliberately outside the type
+      { what: 'a state with features', input: { title: 't', state: { ...sampleMapState, features: [] } } },
+      // @ts-expect-error — deliberately outside the type
+      { what: 'another version', input: { title: 't', state: { ...sampleMapState, version: 2 } } },
+      // @ts-expect-error — deliberately outside the type
+      { what: 'no state', input: { title: 't' } },
+      // @ts-expect-error — deliberately outside the type
+      { what: 'no input', input: null },
+    ];
+    for (const { what, input } of bad) {
+      await refusedWith(() => api.saveMap(input), what, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+      await refusedWith(() => api.saveMap({ ...(input ?? {}), mapId: existing.mapId, expectedUpdatedAt: existing.updatedAt }), `${what} (an update)`, mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    }
+    const rejectedSql = await refusal(async () => { await api.saveMap({ title: 't', state: { ...sampleMapState, layers: [sampleLayer(1), sampleLayer(2, 'DROP TABLE schools')] } }); }, 'a rejected SQL');
+    assert.ok(rejectedSql.message.includes('L2') && !rejectedSql.message.includes('DROP'), 'the message names the layer and does not echo the SQL');
+    assert.deepStrictEqual((await api.listMaps()).maps, listBefore, 'a refused save changes nothing');
+    assert.strictEqual((await api.getMap(existing.mapId)).title, 'Untouched');
+  });
+});
+
+test('maps: a state of the largest allowed size is saved', async () => {
+  await withMaps('allowed', async (made) => {
+    const layers = Array.from({ length: 6 }, (_, n) => sampleLayer(n, sqlOfLength(queryConfig.maxSqlChars)));
+    const state: PersistedMapState = { ...sampleMapState, layers };
+    assert.ok(new TextEncoder().encode(JSON.stringify(state)).length <= mapsConfig.maxStateBytes);
+    const { mapId, updatedAt } = await saved(made, 'Big');
+    await api.saveMap({ mapId, title: 'Big', state, expectedUpdatedAt: updatedAt });
+    assert.deepStrictEqual((await api.getMap(mapId)).state, state);
+  });
+});
+
+test("maps: a conversation id is stored when it is the caller's, and refused (404) when it is another user's or unknown", async () => {
+  const foreign = await asRole('admin', async () => (await api.agentCreateConversationId()).conversationId);
+  await withMaps('allowed', async (made) => {
+    const own = (await api.agentCreateConversationId()).conversationId;
+    const { mapId, updatedAt } = await saved(made, 'With a conversation', { conversationId: own });
+    assert.strictEqual((await api.getMap(mapId)).conversationId, own);
+
+    const listBefore = (await api.listMaps()).maps.length;
+    for (const [what, conversationId] of [['another user\'s', foreign], ['an unknown', randomUUID()]] as const) {
+      await refusedWith(() => api.saveMap({ title: 't', state: sampleMapState, conversationId }), `a new map with ${what} conversation`, conversationStatus.notFound, conversationErrors.NotFound);
+      await refusedWith(() => api.saveMap({ mapId, title: 't', state: sampleMapState, conversationId, expectedUpdatedAt: updatedAt }), `an update with ${what} conversation`, conversationStatus.notFound, conversationErrors.NotFound);
+    }
+    await refusedWith(() => api.saveMap({ title: 't', state: sampleMapState, conversationId: 'not-a-uuid' }), 'a malformed conversation id', mapsStatus.badRequest, mapsErrors.InvalidRequest);
+    assert.strictEqual((await api.listMaps()).maps.length, listBefore, 'a refused save adds no map');
+    assert.strictEqual((await api.getMap(mapId)).conversationId, own, 'a refused update leaves the record as it was');
+  });
+});
+
+test('maps: a new map beyond the per-user limit is a 409, an update still works, and another user is not limited', async () => {
+  await withMaps('allowed', async (made) => {
+    const present = (await api.listMaps()).maps.length;
+    for (let n = present; n < mapsConfig.maxMapsPerUser; n++) await saved(made, `Map ${n}`);
+    assert.strictEqual((await api.listMaps()).maps.length, mapsConfig.maxMapsPerUser);
+    await refusedWith(() => api.saveMap({ title: 'One too many', state: sampleMapState }), 'a map beyond the limit', mapsStatus.conflict, mapsErrors.LimitReached);
+    const [first] = made;
+    await api.saveMap({ mapId: first, title: 'Still updatable', state: sampleMapState, expectedUpdatedAt: (await api.getMap(first)).updatedAt });
+    assert.strictEqual((await api.getMap(first)).title, 'Still updatable');
+    await withMaps('admin', async (adminMade) => { await saved(adminMade, 'Another user is not limited'); });
+    await signInAs('allowed');
+    // Deleting one makes room.
+    await api.deleteMap(first);
+    await saved(made, 'Room again');
+  });
+});
+
+test('datasets: the tests above leave no session behind', async () => {
+  assert.strictEqual((await authApi.getAuthState()).state, 'signedOut');
 });

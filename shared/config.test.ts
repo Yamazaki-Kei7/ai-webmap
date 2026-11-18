@@ -1,0 +1,181 @@
+import { readFileSync } from 'node:fs';
+import type { LngLatLike } from 'maplibre-gl';
+import { describe, expect, it } from 'vitest';
+import { layerIdPattern } from './mapSpec';
+import { mapsErrors } from './maps';
+import { toolErrorCodeSchema } from './toolProtocol';
+import {
+  agentConfig,
+  chatConfig,
+  dataConfig,
+  engineConfig,
+  mapConfig,
+  mapsConfig,
+  promptConfig,
+  queryConfig,
+  resultConfig,
+  styleConfig,
+  toolConfig,
+  urlConfig
+} from './config';
+
+// Fails `npm run typecheck` if the initial view stops being assignable to MapLibre.
+const initialCenter: LngLatLike = mapConfig.initialView.center;
+
+describe('config invariants', () => {
+  it('keeps one tool result within the per-response total', () => {
+    expect(resultConfig.maxToolResultBytes).toBeLessThanOrEqual(resultConfig.maxTotalResultBytes);
+  });
+
+  it('uses positive durations and limits', () => {
+    const numbers = [
+      queryConfig.timeoutMs,
+      queryConfig.cancelGraceMs,
+      queryConfig.maxRows,
+      queryConfig.maxSqlChars,
+      queryConfig.maxFeaturesPerLayer,
+      urlConfig.signedUrlTtlSeconds,
+      urlConfig.refreshMarginSeconds,
+      engineConfig.threads,
+      engineConfig.initTimeoutMs,
+      engineConfig.dataFetchTimeoutMs,
+      engineConfig.maxErrorChars,
+      agentConfig.maxLlmCalls,
+      agentConfig.maxToolIterations,
+      agentConfig.maxUtteranceChars,
+      agentConfig.maxInterruptResponses,
+      agentConfig.maxInterruptIdChars,
+      toolConfig.maxLayerNameChars,
+      toolConfig.maxQueryColumns,
+      toolConfig.maxResultLayers,
+      toolConfig.maxIssuePaths,
+      mapConfig.moveWaitMs,
+      promptConfig.maxChars,
+      promptConfig.maxRepeatedFailures,
+      promptConfig.coarseMetresPerDegree,
+      promptConfig.approxMetresPerDegree
+    ];
+    for (const value of numbers) expect(value).toBeGreaterThan(0);
+  });
+
+  it('gives a data fetch longer than one query, so a slow file is not aborted on every try', () => {
+    expect(engineConfig.dataFetchTimeoutMs).toBeGreaterThan(queryConfig.timeoutMs);
+  });
+
+  it('waits for a map move longer than the move itself takes', () => {
+    expect(mapConfig.moveWaitMs).toBeGreaterThan(mapConfig.fitDurationMs);
+  });
+
+  it('refreshes the signed URLs before they expire', () => {
+    expect(urlConfig.refreshMarginSeconds).toBeLessThan(urlConfig.signedUrlTtlSeconds);
+  });
+
+  it('keeps the default class count inside the allowed range', () => {
+    const { defaultClasses, minClasses, maxClasses } = dataConfig.classification;
+    expect(minClasses).toBeLessThanOrEqual(defaultClasses);
+    expect(defaultClasses).toBeLessThanOrEqual(maxClasses);
+  });
+
+  it('keeps the style defaults inside their bounds', () => {
+    const { defaults, opacity } = styleConfig;
+    for (const value of Object.values(defaults.opacity)) {
+      expect(value).toBeGreaterThanOrEqual(opacity.min);
+      expect(value).toBeLessThanOrEqual(opacity.max);
+    }
+    expect(defaults.strokeWidth).toBeLessThanOrEqual(styleConfig.maxStrokeWidth);
+    expect(defaults.size.point).toBeLessThanOrEqual(styleConfig.maxSize);
+    expect(defaults.size.line).toBeLessThanOrEqual(styleConfig.maxSize);
+    expect(defaults.minRadius).toBeGreaterThan(0);
+    expect(defaults.minRadius).toBeLessThan(defaults.maxRadius);
+    expect(defaults.maxRadius).toBeLessThanOrEqual(styleConfig.maxRadius);
+    expect(styleConfig.zoom.min).toBeLessThan(styleConfig.zoom.max);
+    expect(styleConfig.noDataColor).not.toBe(styleConfig.otherColor);
+    for (const color of [defaults.strokeColor, styleConfig.otherColor, styleConfig.noDataColor]) expect(color).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  it('matches the DuckDB-WASM version pinned in package.json', () => {
+    const pkg: { dependencies: Record<string, string> } = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+    );
+    expect(dataConfig.duckdbWasmVersion).toBe(pkg.dependencies['@duckdb/duckdb-wasm']);
+  });
+
+  it('starts the map at a valid longitude and latitude', () => {
+    expect(initialCenter).toBe(mapConfig.initialView.center);
+    const [lng, lat] = mapConfig.initialView.center;
+    expect(Math.abs(lng)).toBeLessThanOrEqual(180);
+    expect(Math.abs(lat)).toBeLessThanOrEqual(90);
+  });
+
+  it('gives layers a palette of distinct hex colours', () => {
+    const colors = mapConfig.defaultLayerColors;
+    expect(colors.length).toBeGreaterThan(0);
+    for (const color of colors) expect(color).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it('names the label anchor so that no layer id (and so no map layer of a layer) can be it', () => {
+    expect(mapConfig.labelAnchorLayerId).not.toMatch(layerIdPattern);
+    expect(mapConfig.labelAnchorLayerId).not.toMatch(/^L\d+-/);
+    expect(['polygon', 'line', 'point']).toContain(mapConfig.errorLayerGeometry);
+  });
+
+  it('keeps the model layer summary within one tool result, and gives its caps positive values', () => {
+    expect(mapConfig.summaryMaxBytes).toBeLessThanOrEqual(resultConfig.maxToolResultBytes);
+    const caps = [
+      mapConfig.summaryMaxLayers,
+      mapConfig.summarySqlChars,
+      mapConfig.summaryMaxColumns,
+      mapConfig.summaryMaxColumnNameChars,
+      mapConfig.summaryMaxStringChars,
+      mapConfig.summaryMaxWarnings,
+      mapConfig.summaryMaxWarningChars,
+      mapConfig.summaryErrorChars,
+      mapConfig.summaryShrunkCategories
+    ];
+    for (const cap of caps) expect(cap).toBeGreaterThan(0);
+  });
+
+  it('has a Japanese reason for every tool error code, and nothing more', () => {
+    expect(Object.keys(chatConfig.text.toolErrorCodes).sort()).toEqual([...toolErrorCodeSchema.options].sort());
+    for (const reason of Object.values(chatConfig.text.toolErrorCodes)) expect(reason).not.toBe('');
+  });
+
+  it('retries the conversation API after increasing, positive waits', () => {
+    const delays = chatConfig.retryDelaysMs;
+    expect(delays.length).toBeGreaterThan(0);
+    delays.forEach((delay, index) => {
+      expect(delay).toBeGreaterThan(0);
+      if (index > 0) expect(delay).toBeGreaterThan(delays[index - 1]);
+    });
+  });
+
+  it('has a Japanese message for each failure of the saved-maps API the UI names, and a generic one for the rest', () => {
+    const { save, open, remove, list } = mapsConfig.text.errors;
+    for (const name of [mapsErrors.Conflict, mapsErrors.LimitReached, mapsErrors.InvalidRequest, mapsErrors.NotFound]) expect(save[name], name).toMatch(/\S/);
+    for (const name of [mapsErrors.NotFound, mapsErrors.Corrupt]) expect(open[name], name).toMatch(/\S/);
+    expect(remove[mapsErrors.NotFound]).toMatch(/\S/);
+    for (const messages of [save, open, remove, list]) expect(messages.generic).toMatch(/\S/);
+    // Never an English server message, and never the schema's.
+    for (const message of [...Object.values(save), ...Object.values(open), ...Object.values(remove), ...Object.values(list)]) expect(message).toMatch(/[\u3040-\u30ff\u4e00-\u9fff]/);
+  });
+
+  it('counts a small pan or zoom as no change to a saved map, but not a move across the screen', () => {
+    const { zoomLevels, centerTiles } = mapsConfig.unsavedViewChange;
+    expect(zoomLevels).toBeGreaterThan(0);
+    expect(zoomLevels).toBeLessThanOrEqual(1);
+    expect(centerTiles).toBeGreaterThan(0);
+    expect(mapsConfig.noticeMs).toBeGreaterThan(0);
+  });
+
+  it('draws a feature without a number smaller than the smallest proportional symbol', () => {
+    expect(styleConfig.noDataRadius).toBeLessThan(styleConfig.defaults.minRadius);
+  });
+
+  it('gives labels hex colours and a font stack', () => {
+    expect(styleConfig.labelDefaults.color).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(styleConfig.labelDefaults.haloColor).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(mapConfig.label.fontStack.length).toBeGreaterThan(0);
+    expect(mapConfig.localIdeographFontFamily).toContain('sans-serif');
+  });
+});

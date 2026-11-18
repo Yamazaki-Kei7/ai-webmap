@@ -1,34 +1,56 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { authApi } from 'aws-blocks';
-  import { onAuthChange } from '@aws-blocks/blocks/ui';
-  import TodoList from '$lib/components/TodoList.svelte';
+  import { Authenticator, onAuthChange } from '@aws-blocks/blocks/ui';
+  import { mountNode } from '$lib/mountNode';
+  import { disposeEngine, initEngine, type EngineStatus } from '$lib/duckdb/engine';
+  import { bindEngineToUser } from '$lib/duckdb/engineEffect.svelte';
+  import AppShell from '$lib/components/AppShell.svelte';
+  import { resetMapState } from '$lib/map/mapState.svelte';
+  import { clearCurrentMap } from '$lib/map/savedMapFlow.svelte';
+  import type { Map as MaplibreMap } from 'maplibre-gl';
 
   type AuthUser = Parameters<Parameters<typeof onAuthChange>[1]>[0];
 
+  const appTitle = 'AI Webmap';
+
   let user = $state<AuthUser>(null);
+  let map = $state<MaplibreMap>();
+  let engineStatus = $state<EngineStatus>({ state: 'idle' });
+  const setStatus = (next: EngineStatus): void => { engineStatus = next; };
+
+  // The data engine runs for the signed-in user; sign-out or another user drops its worker and the fetched data.
+  bindEngineToUser({ getUser: () => user, initEngine, disposeEngine, setStatus });
+
+  // Signing out (or another user signing in) leaves no layer, and no saved map being shown, of the previous user behind.
+  const owner = $derived(user?.username ?? null);
+  $effect(() => {
+    void owner;
+    return () => {
+      resetMapState();
+      clearCurrentMap();
+    };
+  });
+
+  // Browser-check helpers; the guard removes the import from the production build.
+  onMount(() => {
+    if (import.meta.env.DEV) void import('$lib/duckdb/dev').then((dev) => dev.installDevHandle());
+  });
 
   // Follows sign-in / sign-out from this window and other tabs.
   onMount(() => onAuthChange(authApi, (next) => { user = next; }));
 </script>
 
 <svelte:head>
-  <title>Blocks App</title>
+  <title>{appTitle}</title>
 </svelte:head>
 
-<h1 class="mb-1 text-3xl font-bold">Blocks App</h1>
-<p class="mb-6 text-sm leading-normal text-bb-muted">
-  This starter app demonstrates:
-  <strong class="text-bb-text">authentication</strong> with cross-tab coordination,
-  <strong class="text-bb-text">real-time sync</strong> across browser tabs,
-  and <strong class="text-bb-text">todos stored in a distributed table</strong> with per-user isolation.
-</p>
-
 {#if user}
-  <!-- Keyed so a different user gets a fresh list and realtime subscription. -->
-  {#key user.username}
-    <TodoList />
-  {/key}
+  <AppShell title={appTitle} {owner} {engineStatus} {setStatus} bind:map />
 {:else}
-  <p>Sign in to get started.</p>
+  <!-- The server offers sign-in only; accounts are created by the operator. -->
+  <div class="mx-auto my-10 max-w-4xl p-5">
+    <h1 class="mb-6 text-3xl font-bold">{appTitle}</h1>
+    <div {@attach mountNode(() => Authenticator(authApi))}></div>
+  </div>
 {/if}

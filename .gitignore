@@ -5,7 +5,7 @@ node_modules/
 build/
 
 # AWS Blocks / CDK
-# .bb-data/ is the dev server's local data (users, todos); delete it to reset.
+# .bb-data/ is the dev server's local data (users); delete it to reset.
 .bb-data/
 .blocks-sandbox/
 .hosting/
@@ -18,3 +18,10 @@ cdk.out/
 .env
 .env.*
 !.env.example
+
+# Raw/converted geodata (re-create with scripts/data/download.sh)
+/data/
+.playwright-mcp/
+
+# Unit-test coverage output
+coverage/
